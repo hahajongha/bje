@@ -8,9 +8,9 @@ function validDate(value) {
 }
 
 export function normalizeFxHedge(raw) {
-  if (raw == null) return {source:'데이터 미연결', pairs:[]};
-  if (typeof raw !== 'object' || raw.unit !== 'annual_percent' || !Array.isArray(raw.pairs)) {
-    throw Error('환헤지 데이터의 단위(annual_percent)와 pairs 배열을 확인하십시오.');
+  if (raw == null) return {unit:'annual_percent', source:'데이터 미연결', pairs:[]};
+  if (typeof raw !== 'object' || !['annual_percent','source_value'].includes(raw.unit) || !Array.isArray(raw.pairs)) {
+    throw Error('환헤지 데이터의 단위(annual_percent·source_value)와 pairs 배열을 확인하십시오.');
   }
   const seen = new Set();
   const pairs = raw.pairs.map(pair => {
@@ -30,9 +30,18 @@ export function normalizeFxHedge(raw) {
     next.volPeriod = String(pair.volPeriod ?? '기간 미지정').slice(0,80);
     if (pair.aggregation != null && !['snapshot','median_5_business_days'].includes(pair.aggregation)) throw Error('환헤지 집계방식을 확인하십시오.');
     next.aggregation = pair.aggregation ?? 'snapshot';
+    next.source = String(pair.source ?? raw.source ?? '사용자 스냅샷').slice(0,120);
+    if (pair.history != null && (!Array.isArray(pair.history) || pair.history.length > 30000)) throw Error(`${pair.currency} 과거 관측값 배열을 확인하십시오.`);
+    next.history = (pair.history ?? []).map((row, i) => {
+      if (!row || !validDate(row.date) || row.date > pair.asOf || (i && row.date <= pair.history[i-1].date) || !Number.isFinite(row.value)) throw Error(`${pair.currency} 과거 관측값·날짜 순서를 확인하십시오.`);
+      return {date:row.date, value:row.value};
+    });
+    const latest = next.history.at(-1);
+    const tenors = [next.hedge3m, next.hedge6m, next.hedge12m];
+    if (latest?.date === next.asOf && (!tenors.every(Number.isFinite) || Math.abs(latest.value - tenors.reduce((sum,value) => sum + value/3, 0)) > 1e-8 * Math.max(1, Math.abs(latest.value)))) throw Error(`${pair.currency} 최신 프리미엄과 평균 시계열이 일치하지 않습니다.`);
     return next;
   });
-  return {source:String(raw.source ?? '사용자 스냅샷').slice(0,120), pairs};
+  return {unit:raw.unit, source:String(raw.source ?? '사용자 스냅샷').slice(0,120), pairs};
 }
 
 export function renderHedgeMarkup(snapshot) {
@@ -40,17 +49,18 @@ export function renderHedgeMarkup(snapshot) {
     const pair = snapshot.pairs.find(p => p.currency === currency);
     const tenors = pair ? [pair.hedge3m, pair.hedge6m, pair.hedge12m] : [null,null,null];
     const average = tenors.every(Number.isFinite) ? tenors.reduce((sum,value) => sum+value/3,0) : null;
+    const rawUnit = snapshot.unit === 'source_value';
     const cards = [
-      ['환헤지비용 3M', tenors[0], '', false],
-      ['환헤지비용 6M', tenors[1], '', false],
-      ['환헤지비용 12M', tenors[2], '', false],
-      ['헤지비용 평균', average, '3M·6M·12M 단순평균', false],
+      [rawUnit ? '프리미엄 3M' : '환헤지비용 3M', tenors[0], '', false],
+      [rawUnit ? '프리미엄 6M' : '환헤지비용 6M', tenors[1], '', false],
+      [rawUnit ? '프리미엄 12M' : '환헤지비용 12M', tenors[2], '', false],
+      [rawUnit ? '프리미엄 평균' : '헤지비용 평균', average, '3M·6M·12M 단순평균', false],
       ['환 변동성', pair?.fxVol ?? null, pair?.volPeriod ?? '연환산 σ', true],
     ];
     return `<article class="hedge-currency"><h3>${currency}<span class="small">${pair?.aggregation === 'median_5_business_days' ? '최근 5영업일 중앙값' : '기준일 스냅샷'}</span></h3><div class="hedge-metrics">${cards.map(([label,value,detail,vol]) => {
       const present = Number.isFinite(value);
       const tone = !present ? 'missing' : vol || value === 0 ? '' : value < 0 ? 'negative' : 'positive';
-      return `<div class="hedge-card"><h4>${label}</h4><div class="hedge-value ${tone}">${present ? `${!vol && value > 0 ? '+' : ''}${format(value)}%` : '—'}</div><div class="hedge-date">${present ? esc(vol ? pair.volAsOf : pair.asOf) : '데이터 없음'}</div>${detail ? `<div class="small">${esc(detail)}</div>` : ''}</div>`;
+      return `<div class="hedge-card"><h4>${label}</h4><div class="hedge-value ${tone}">${present ? `${!vol && value > 0 ? '+' : ''}${format(value)}${vol || !rawUnit ? '%' : ''}` : '—'}</div><div class="hedge-date">${present ? esc(vol ? pair.volAsOf : pair.asOf) : '데이터 없음'}</div>${detail ? `<div class="small">${esc(detail)}</div>` : ''}</div>`;
     }).join('')}</div></article>`;
   }).join('');
 }

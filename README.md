@@ -166,3 +166,34 @@ HTML 미리보기는 실제 JSON을 내부에 담으므로 비공개로 보관�
 허용 저장소 `hahajongha/bje`에는 KG 모듈이 없어 KG 참조는 수행하지 못했습니다. 다른 저장소의 코드·지식그래프는 열지 않았습니다. 일반 모형과 필터의 근거는 [Hamilton, Regime-Switching Models](https://econweb.ucsd.edu/~jhamilto/palgrav1.pdf), 구현 참고는 [statsmodels 공식 Markov Switching 설명](https://www.statsmodels.org/stable/examples/notebooks/generated/markov_autoregression.html)입니다. 본 구현은 평균과 분산이 전환되는 3상태 로그수익률 모형이며 참고 예제의 시계열·모형을 복제한 결과가 아닙니다.
 
 독립 검증 스크립트는 짧은 지평의 모든 상태경로를 열거하여 필터·smoother·전이 count·누적 로그 모멘트·환율수준 기댓값과 비교하고, Gaussian mixture CDF를 역산해 시뮬레이션 분위수를 대조합니다. 흡수국면과 동일국면 경계조건도 확인합니다. 브라우저 실행 파일 다운로드 실패로 전체 브라우저의 네이티브 파일 입력·레이아웃 검증은 수행하지 못했으며, Node의 실제 이벤트 로직/DOM 대역과 SVG 래스터 확인으로 범위를 구분합니다.
+
+## data_info 시장자료 연결
+
+상단 `시장자료 불러오기`에서 `bje_data_info` JSON 하나를 읽어 리스크의 금리·환율·시장위험 지표, CMA의 KIS 종합채권 과거 실적, 환헤지 모니터링과 분포를 함께 갱신합니다. 각 값에는 관측일과 원자료 열을 표시합니다. 기존 자산 가정·무위험금리·비중·공분산·환율모형은 변경하지 않습니다. 불러온 자료는 브라우저 메모리에서만 처리합니다. 자동 Drive 동기화나 공개 데이터 배포는 포함하지 않습니다.
+
+```bash
+python scripts/build_info_snapshot.py --info /private/data_info.xlsx --as-of 2026-10-16 --output /private/bje-data-info.json
+python scripts/export_info_preview.py --input /private/bje-data-info.json --output /private/bje-data-info.html
+python scripts/verify_info_snapshot.py --info /private/data_info.xlsx --snapshot /private/bje-data-info.json
+python -m unittest discover -s tests -p 'test_info_snapshot.py'
+BJE_INFO_DATA=/private/bje-data-info.json node --test tests/*.test.mjs
+```
+
+HTML은 실제 시장자료를 내장한 개인용 전체 화면입니다. 파일을 열면 리스크 탭에서 시작하며, 기존 7개 자산군의 투자 가정은 가상 기본값 그대로입니다. 원본 Excel·생성 JSON·HTML은 저장소 밖에만 생성합니다. `dist`에 실제 값이나 Drive ID를 넣지 않습니다.
+
+| 데이터 | DailyRate 열 | 처리 |
+| --- | --- | --- |
+| USD 헤지 프리미엄 | HW, HX, HY | 같은 날짜 3M·6M·12M 원자료와 완결 관측의 평균 |
+| JPY 헤지 프리미엄 | HZ, IA, IB | 동일 |
+| EUR 헤지 프리미엄 | IC, ID, IE | 동일 |
+| AUD 헤지 프리미엄 | IF, IG, IH | 동일 |
+| FX 변동성 | V, Y, AB, AC | 마지막 253개 관측의 로그수익률 표본표준편차 × √252 × 100 |
+| KIS 종합채권 | JO, JP, JQ | 총수익지수·수정듀레이션·볼록성, 완결월 60개 수익률 통계 |
+
+헤지 열의 하위 헤더는 `프리미엄`이며 연율·백분율 단위가 명시되어 있지 않습니다. 따라서 신규 입력은 `unit: source_value`로 보존하고 화면에 `원자료 단위`를 표시합니다. 숫자를 임의로 연율화하거나 % 단위를 붙이지 않습니다. 기존 `annual_percent` 환헤지 JSON은 기존 표시 방식을 유지합니다. FX 변동성만 연율 %이며 엔화 현물은 원/100엔입니다.
+
+헤지 분포는 같은 날짜의 세 만기가 모두 존재하는 일별 단순평균으로 계산합니다. 최근 관측의 누락된 만기는 과거 값으로 메우지 않습니다. 기간 선택은 최대 조회 범위이며 차트에 실제 보유기간·관측수를 표시합니다. 환변동성 창 안에 누락된 날짜행이 있으면 수익률을 연결하지 않고 결측 처리합니다. 휴장일·동일가격 반복 관측은 원자료에 남아 있을 수 있습니다.
+
+KIS 통계는 최근 60개 완결월의 단순수익률에서 산술평균 × 12, 표본표준편차 × √12로 계산합니다. CAGR은 월말 지수 비율을 연율화하며 MDD는 월말 관측 기준입니다. 월말 7일을 초과해 낡은 관측과 누락 월은 허용하지 않습니다. YTD는 직전 연말, 1년 수익률은 1년 전 같은 날짜 이하의 가장 가까운 관측을 사용합니다. 과거 실적은 투자 전망이나 7개 자산군 전체의 CMA 추정치가 아닙니다.
+
+2026-10-16 검증: Node 계산·DOM 47개와 Python 추출 12개 통과. 별도 검증기는 XLSX XML을 직접 읽고 표준 `math`로 재계산하여 20개 시장지표, 61개 월말 지수, 1,892개 헤지 평균 이력을 대조했습니다. 숫자 2,040개·정확일치 필드 2,065개 통과, 최대 절대차 7.44e-15입니다. 파일 자체의 제공기관 정확성은 동일 원자료 공유로 인해 독립 검증된 것이 아닙니다. 생성 HTML의 전체 모듈·내장자료·탭 이벤트를 Node VM/DOM으로 실행하고 네트워크 요청이 없음을 확인했으며, SVG 차트 5개를 래스터로 확인했습니다. 브라우저 바이너리 다운로드 실패로 실제 브라우저의 파일 선택·전체 페이지 배치는 미검증입니다.

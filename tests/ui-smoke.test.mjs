@@ -15,6 +15,7 @@ import { demoData } from '../dist/demo-data.mjs';
 import { normalizeFxHedge, renderHedgeMarkup } from '../dist/fx-hedge.mjs';
 import { renderRiskMarkup } from '../dist/risk.mjs';
 import { defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios } from '../dist/allocation.mjs';
+import { initDataInfoUI } from '../dist/data-info-ui.mjs';
 
 const html = await fs.readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
 const source = (await fs.readFile(new URL('../dist/app.mjs', import.meta.url), 'utf8'))
@@ -98,13 +99,13 @@ async function boot(raw) {
   const cache = new Map();
   const run = new AsyncFunction(
     'covariance', 'stats', 'optimize', 'validateInputs', 'demoData', 'normalizeFxHedge', 'renderHedgeMarkup', 'renderRiskMarkup',
-    'defaultPolicy', 'validatePolicy', 'satisfiesPolicy', 'optimizeAllocation', 'samplePortfolios',
+    'defaultPolicy', 'validatePolicy', 'satisfiesPolicy', 'optimizeAllocation', 'samplePortfolios', 'initDataInfoUI',
     'document', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
-    `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen}) };`,
+    `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen}), dataInfoUI };`,
   );
   const app = await run(
     covariance, stats, optimize, validateInputs, demoData, normalizeFxHedge, renderHedgeMarkup, renderRiskMarkup,
-    defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios,
+    defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios, initDataInfoUI,
     document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
     async () => ({ ok: true, json: async () => structuredClone(raw) }),
     () => 1, () => {},
@@ -427,3 +428,27 @@ for (const [label, raw] of datasets) {
   });
 
 }
+
+test('market import changes market and hedge views without touching applied portfolio assumptions', async()=>{
+  const app=await boot(demoData);
+  const prior=app.snapshot();
+  const market={kind:'bje_data_info',schemaVersion:1,meta:{source:'synthetic DailyRate',asOf:'2026-10-16',latestObservation:'2026-10-15',sha256:'a'.repeat(64),units:{hedge:'source_value'}},market:{rates:[{id:'rate',label:'한국 3년',value:3,previous:2.9,change:.1,unit:'%',asOf:'2026-10-15',previousDate:'2026-10-14',source:'DailyRate!C'}],risk:[],fx:[]},bond:null,fxHedge:{unit:'source_value',source:'synthetic DailyRate',pairs:[{currency:'USDKRW',asOf:'2026-10-15',hedge3m:-1,hedge6m:-2,hedge12m:-3,fxVol:10,history:[{date:'2026-10-14',value:-1},{date:'2026-10-15',value:-2}]}]}};
+  app.dataInfoUI.apply(market);
+  assert.deepEqual(app.snapshot(),prior);
+  assert.match(app.get('marketSnapshot').innerHTML,/한국 3년/);
+  assert.match(app.get('hedgeGrid').innerHTML,/-2\.00<\/div>/);
+  assert.match(app.get('hedgeUnit').textContent,/원자료 단위/);
+  assert.match(app.get('hedgeHistograms').innerHTML,/2026-10-14 ~ 2026-10-15/);
+  const previousMarkup=app.get('marketSnapshot').innerHTML, previousHedge=app.get('hedgeGrid').innerHTML;
+  const invalid=structuredClone(market);invalid.market.rates[0].change=100;
+  const body=JSON.stringify(invalid);
+  await app.get('dataInfoImportFile').onchange({target:{files:[{size:body.length,text:async()=>body}],value:'invalid.json'}});
+  assert.equal(app.get('dataInfoError').hidden,false);
+  assert.equal(app.get('hedgeGrid').innerHTML,previousHedge);
+  assert.deepEqual(app.snapshot(),prior);
+  await app.importData(demoData);
+  assert.equal(app.get('marketSnapshot').innerHTML,previousMarkup);
+  assert.equal(app.get('hedgeGrid').innerHTML,previousHedge);
+  assert.match(app.get('hedgeHistograms').innerHTML,/2026-10-14 ~ 2026-10-15/);
+  assert.equal(app.dataInfoUI.getSnapshot().meta.source,'synthetic DailyRate');
+});

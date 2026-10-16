@@ -10,10 +10,10 @@
   <a class="brand" href="#overview" aria-label="BJE 홈"><span class="brand-symbol">b.</span><span>BJE<span class="brand-sub">PORTFOLIO LAB</span></span></a>
   <div class="nav-label">WORKSPACE</div>
   <nav aria-label="주 메뉴">
-    <button class="nav-item active" data-tab="overview">PORT</button>
-    <button class="nav-item" data-tab="risk">RISK</button>
+    <button class="nav-item active" data-tab="overview">Portfolio</button>
+    <button class="nav-item" data-tab="risk">Risk</button>
     <button class="nav-item" data-tab="assumptions">CMA</button>
-    <button class="nav-item" data-tab="hedge">HEDGE</button>
+    <button class="nav-item" data-tab="hedge">Hedge</button>
     <button class="nav-item" data-tab="fxmodel">FX</button>
   </nav>
 </aside>
@@ -26,7 +26,12 @@
       <div class="section-heading"><h2>포트폴리오 비교 <span class="pill">4 STRATEGIES</span></h2><div class="inline-control"><label for="coverage">1년 수익률 범위</label><select id="coverage"><option value=".68">68%</option><option value=".9" selected>90%</option><option value=".95">95%</option><option value=".99">99%</option></select></div></div>
       <div class="portfolio-cards" id="portfolioCards"></div>
       <div class="analysis-grid">
-        <article class="panel frontier-panel"><div class="panel-heading"><div><h2>효율적 경계선</h2></div><span class="small" id="frontierStatus">동일 가정 비교</span></div><div class="chart-wrap" id="frontierChart"></div><div class="sharpe-scale"><strong>Sharpe</strong><span id="sharpeMin"></span><i></i><span id="sharpeMax"></span><span id="mixCount" class="small"></span></div><div class="mix-explorer"><label for="mixSlider">조합 탐색</label><input id="mixSlider" type="range" min="0" max="0" value="0" aria-label="Sharpe 순서로 조합 탐색"><span id="mixMetric" aria-live="polite">—</span></div><div id="assetSelectors" class="asset-selectors" role="group" aria-label="개별 자산 선택"></div><div class="chart-legend"><span><i class="legend-line"></i> 효율적 경계선</span><span><i class="legend-dot frontier-goal"></i> 이동 목표</span><span><i class="legend-dot gold"></i> 선택한 포트폴리오</span><span><i class="legend-dot muted"></i> 개별 자산</span><span><i class="legend-dot taa-one"></i> 비중1</span><span><i class="legend-dot taa-two"></i> 비중2</span></div><div class="chart-foot"><span>변동성은 연간 표준편차 · 수익률은 연간 산술평균</span><span>LONG ONLY · 100%</span></div></article>
+        <article class="panel frontier-panel"><div class="panel-heading"><div><h2>효율적 경계선</h2></div></div><form id="frontierAxisForm" class="frontier-axis-controls" aria-label="효율적 경계선 축 범위" novalidate>
+          <fieldset><legend>변동성 X축 (%)</legend><label for="frontierXMin">최소<input id="frontierXMin" type="number" min="0" step="any" placeholder="자동" inputmode="decimal"></label><label for="frontierXMax">최대<input id="frontierXMax" type="number" min="0" step="any" placeholder="자동" inputmode="decimal"></label></fieldset>
+          <fieldset><legend>기대수익 Y축 (%)</legend><label for="frontierYMin">최소<input id="frontierYMin" type="number" step="any" placeholder="자동" inputmode="decimal"></label><label for="frontierYMax">최대<input id="frontierYMax" type="number" step="any" placeholder="자동" inputmode="decimal"></label></fieldset>
+          <div class="axis-actions"><button type="submit" class="button primary">적용</button><button type="button" id="frontierAxisReset" class="button secondary">자동</button></div>
+          <p id="frontierAxisError" class="axis-error" role="alert" hidden></p>
+        </form><div class="chart-wrap" id="frontierChart"></div><div class="sharpe-scale"><strong>Sharpe</strong><span id="sharpeMin"></span><i></i><span id="sharpeMax"></span><span id="mixCount" class="small"></span></div><div class="mix-explorer"><label for="mixSlider">조합 탐색</label><input id="mixSlider" type="range" min="0" max="0" value="0" aria-label="Sharpe 순서로 조합 탐색"><span id="mixMetric" aria-live="polite">—</span></div><div id="assetSelectors" class="asset-selectors" role="group" aria-label="개별 자산 선택"></div><div class="chart-legend"><span><i class="legend-line"></i> 효율적 경계선</span><span><i class="legend-dot frontier-goal"></i> 이동 목표</span><span><i class="legend-dot gold"></i> 선택한 포트폴리오</span><span><i class="legend-dot muted"></i> 개별 자산</span><span><i class="legend-dot taa-one"></i> 비중1</span><span><i class="legend-dot taa-two"></i> 비중2</span></div></article>
         <article class="panel allocation-panel">
           <div class="panel-heading"><div><div class="eyebrow">ASSET MIX</div><h2>자산 구성</h2></div><span id="selectedLabel" class="small accent">현재 비중</span></div>
           <div class="donut-wrap" id="allocationDonut"></div>

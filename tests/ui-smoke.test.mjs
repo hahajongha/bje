@@ -12,6 +12,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { covariance, stats, optimize, validateInputs } from '../dist/portfolio.mjs';
 import { demoData } from '../dist/demo-data.mjs';
+import { normalizeFxHedge, renderHedgeMarkup } from '../dist/fx-hedge.mjs';
+import { renderRiskMarkup } from '../dist/risk.mjs';
 
 const html = await fs.readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
 const source = (await fs.readFile(new URL('../dist/app.mjs', import.meta.url), 'utf8'))
@@ -46,6 +48,7 @@ function createDocument() {
         },
       },
       getAttribute: name => attributes[name] ?? null,
+      setAttribute: (name, value) => { attributes[name] = String(value); },
       click() {
         if (tag === 'a' && this.download) downloads.push({ download: this.download, href: this.href });
         return this.onclick?.({ target: this, preventDefault() {} });
@@ -98,12 +101,12 @@ async function boot(raw) {
   const cache = new Map();
   const blobs = [];
   const run = new AsyncFunction(
-    'covariance', 'stats', 'optimize', 'validateInputs', 'demoData',
+    'covariance', 'stats', 'optimize', 'validateInputs', 'demoData', 'normalizeFxHedge', 'renderHedgeMarkup', 'renderRiskMarkup',
     'document', 'localStorage', 'fetch', 'URL', 'Blob', 'setTimeout', 'clearTimeout',
     `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen}) };`,
   );
   const app = await run(
-    covariance, stats, optimize, validateInputs, demoData,
+    covariance, stats, optimize, validateInputs, demoData, normalizeFxHedge, renderHedgeMarkup, renderRiskMarkup,
     document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
     async () => ({ ok: true, json: async () => structuredClone(raw) }),
     { createObjectURL: blob => { blobs.push(blob); return `blob:test-${blobs.length}`; }, revokeObjectURL() {} },
@@ -127,6 +130,68 @@ const datasets = [['demo', demoData]];
 if (process.env.BJE_TEST_DATA) {
   datasets.push(['external snapshot', JSON.parse(await fs.readFile(process.env.BJE_TEST_DATA, 'utf8'))]);
 }
+
+test('risk selection stays synchronized with portfolio cards and model navigation is isolated', async () => {
+  const app = await boot(demoData);
+  const nav = name => app.document.querySelectorAll('[data-tab]').find(button => button.dataset.tab === name);
+  nav('risk').click();
+  assert.equal(app.get('risk').hidden, false);
+  assert.equal(app.get('overview').hidden, true);
+  app.get('riskPortfolio').value = 'minVol';
+  app.get('riskPortfolio').onchange();
+  assert.equal(app.snapshot().chosen, 'minVol');
+  assert.match(app.get('riskContent').innerHTML, /최소 변동성/);
+  assert.doesNotMatch(app.get('riskContent').innerHTML, /NaN|Infinity|undefined/);
+  assert.equal(app.document.querySelectorAll('[data-portfolio]').find(b => b.dataset.portfolio === 'minVol').getAttribute('aria-pressed'), 'true');
+  nav('hedge').click();
+  assert.equal(app.get('hedge').hidden, false);
+  assert.equal(app.document.querySelector('.data-strip').hidden, true);
+  for (const tab of ['modelA', 'modelB', 'monitor']) {
+    const button = app.document.querySelectorAll('[data-hedge-tab]').find(b => b.dataset.hedgeTab === tab);
+    button.click();
+    assert.equal(button.getAttribute('aria-pressed'), 'true');
+    for (const panel of app.document.querySelectorAll('.hedge-panel')) assert.equal(panel.hidden, panel.id !== `hedge-${tab}`);
+  }
+  nav('overview').click();
+  assert.equal(app.document.querySelector('.data-strip').hidden, false);
+  assert.equal(app.get('riskPortfolio').value, 'minVol');
+});
+
+test('FX imports preserve missing tenors, signs, dates and prior data on rejection', async () => {
+  const app = await boot(demoData);
+  const initial = app.get('hedgeGrid').innerHTML;
+  assert.equal((initial.match(/데이터 없음/g) || []).length, 20);
+  assert.doesNotMatch(initial, /2026-09-23|0\.00%/);
+  const payload = {unit:'annual_percent', source:'<snapshot>', pairs:[
+    {currency:'USDKRW', asOf:'2026-10-15', hedge3m:-1, hedge6m:-2, hedge12m:-3, fxVol:10},
+    {currency:'JPYKRW', asOf:'2026-10-14', hedge3m:1, hedge6m:null, hedge12m:3, fxVol:0},
+  ]};
+  const importFx = async raw => {
+    const body = JSON.stringify(raw);
+    const target = {files:[{size:body.length, text:async () => body}], value:'fx.json'};
+    await app.get('hedgeImportFile').onchange({target});
+    assert.equal(target.value, '');
+  };
+  await importFx(payload);
+  assert.equal(app.get('alert').hidden, true);
+  const markup = app.get('hedgeGrid').innerHTML;
+  assert.match(markup, /negative">-2\.00%/);
+  assert.match(markup, /positive">\+1\.00%/);
+  assert.match(markup, /2026-10-15/);
+  assert.match(markup, /0\.00%/);
+  assert.equal((markup.match(/데이터 없음/g) || []).length, 12);
+  const broken = structuredClone(payload);
+  broken.pairs[0].asOf = '2026-02-30';
+  await importFx(broken);
+  assert.equal(app.get('alert').hidden, false);
+  assert.equal(app.get('hedgeGrid').innerHTML, markup);
+  const invalidPortfolio = structuredClone(demoData);
+  invalidPortfolio.fxHedge = broken;
+  const prior = app.snapshot();
+  await app.importData(invalidPortfolio);
+  assert.deepEqual(app.snapshot(), prior);
+  assert.equal(app.get('hedgeGrid').innerHTML, markup);
+});
 
 for (const [label, raw] of datasets) {
   test(`${label}: startup renders selected data and finite portfolio markup`, async () => {

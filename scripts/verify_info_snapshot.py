@@ -38,6 +38,7 @@ HEDGE = [('USDKRW', ('HW', 'HX', 'HY'), 'V'), ('JPYKRW', ('HZ', 'IA', 'IB'), 'Y'
          ('EURKRW', ('IC', 'ID', 'IE'), 'AB'), ('AUDKRW', ('IF', 'IG', 'IH'), 'AC')]
 COLUMNS = {col for specs in MARKET.values() for _, col, _ in specs} | {'JO', 'JP', 'JQ'}
 COLUMNS |= {col for _, columns, _ in HEDGE for col in columns}
+COLUMNS |= {'B', 'E', 'G', 'AE', 'AG', 'AI'}
 
 
 def private_path(value):
@@ -193,6 +194,42 @@ def expected_hedge(records):
     return {'unit': 'source_value', 'pairs': pairs}, max(scaling_errors, default=0)
 
 
+def expected_fx_analytics(records, cutoff):
+    """Independently reconcile exact-date rate cases and raw FX histories."""
+    eligible = [(day, row) for day, row in records.items() if day >= date(2015, 1, 1)]
+    rates = []
+    for tenor, kr, us in [('PR', 'Q', 'AT'), ('3M', 'B', 'AE'), ('1Y', 'E', 'AG'),
+                         ('2Y', 'G', 'AH'), ('3Y', 'I', 'AI')]:
+        rates.append({'tenor': tenor, 'history': [
+            {'date': day.isoformat(), 'kr': row[kr], 'us': row[us],
+             'hedge': math.fsum([row['HW'], row['HX'], row['HY']]) / 3}
+            for day, row in eligible if all(finite(row[col]) for col in [kr, us, 'HW', 'HX', 'HY'])]})
+    spots = [{'id': identifier, 'unit': unit,
+              'history': [{'date': day.isoformat(), 'value': row[column]}
+                          for day, row in eligible if positive(row[column])]}
+             for identifier, column, unit in MARKET['fx']]
+    return {'schemaVersion': 1, 'asOf': cutoff.isoformat(), 'source': 'data_info.xlsx · DailyRate',
+            'hedgeUnit': 'source_value', 'ratePairs': rates, 'spots': spots}
+
+
+def expected_model_input(records, actual, cutoff, source_hash):
+    """Verify fitted observations without sharing production XLSX extraction."""
+    provenance = actual['meta']['provenance']
+    start = date.fromisoformat(provenance['requestedStart'])
+    rows = [(day, row['V']) for day, row in records.items()
+            if start <= day <= cutoff and day.weekday() < 5 and positive(row['V'])]
+    if not rows:
+        raise ValueError('No independently recovered midpoint model history.')
+    return {'schemaVersion': 1, 'pair': 'USDKRW',
+            'meta': {'asOf': rows[-1][0].isoformat(), 'start': rows[0][0].isoformat(),
+                     'end': rows[-1][0].isoformat(), 'n': len(rows), 'returnObservations': len(rows) - 1,
+                     'source': 'data_info.xlsx · DailyRate!A/V · USDKRW · 중간값',
+                     'provenance': {'primary': {'sheet': 'DailyRate', 'dateColumn': 'A', 'valueColumn': 'V',
+                                                'header': ['USDKRW', '중간값'], 'sha256': source_hash},
+                                    'gapFilling': False, 'sourceSplicing': False}},
+            'history': [{'date': day.isoformat(), 'spot': value} for day, value in rows]}
+
+
 def expected_bond(records, cutoff):
     common = [day for day, row in records.items() if all(positive(row[column]) for column in ('JO', 'JP', 'JQ'))]
     if not common:
@@ -288,12 +325,18 @@ def main():
                              'sha256': sha256(info), 'units': {'hedge': 'source_value', 'rates': 'percent',
                              'bondReturns': 'percent', 'fxVolatility': 'annual_percent'}},
                     'market': expected_market(records), 'bond': bond, 'fxHedge': hedge}
+        if 'fxAnalytics' in actual:
+            expected['fxAnalytics'] = expected_fx_analytics(records, cutoff)
+        if 'fxModel' in actual:
+            expected['fxModel'] = expected_model_input(records, actual['fxModel'], cutoff, sha256(info))
         counts = {'numericFields': 0, 'exactFields': 0, 'maxAbsoluteError': 0}
         compare(actual, expected, args.atol, args.rtol, counts)
         print(json.dumps({'verified': True, 'reader': 'XLSX XML / standard-library math', **counts,
                           'marketMetrics': sum(len(group) for group in expected['market'].values()),
                           'bondMonthlyEndpoints': len(bond['monthly']) if bond else 0,
                           'hedgeHistoryRows': sum(len(pair['history']) for pair in hedge['pairs']),
+                          'ratePairHistoryRows': sum(len(pair['history']) for pair in expected.get('fxAnalytics', {}).get('ratePairs', [])),
+                          'fxModelObservations': len(expected.get('fxModel', {}).get('history', [])),
                           'monthlyCompoundingIdentityError': identity_error,
                           'logVolScalingIdentityError': scaling_error,
                           'atol': args.atol, 'rtol': args.rtol}, ensure_ascii=False))

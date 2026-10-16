@@ -16,6 +16,7 @@ def export_preview(snapshot_path, output_path):
         raise ValueError('Expected a version 1 USDKRW snapshot.')
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')
     css = (REPO / 'dist/styles.css').read_text(encoding='utf-8')
+    css += '\n' + (REPO / 'dist/fx-workspace.css').read_text(encoding='utf-8')
     js = (REPO / 'dist/fx-model-ui.mjs').read_text(encoding='utf-8')
     js = js.replace('export function ', 'function ')
     js = js.replace("if(typeof document!=='undefined')mountFxModel(document);", '')

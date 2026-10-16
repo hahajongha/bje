@@ -123,7 +123,7 @@ export function renderFxChart(snapshot, months=12, years=3, width=1040, coverage
   let out=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="fxChartTitle fxChartDesc"><title id="fxChartTitle">USDKRW 과거 환율과 3국면 Markov 전망</title><desc id="fxChartDesc">기준일 ${esc(last.date)}. 파란색은 과거 관측, 붉은 점선은 조건부 평균 전망. 음영은 ${[68,90,95].filter(b=>b<=coverage).join(', ')}% 모형 예측구간.</desc>`;
   for(let j=0;j<=5;j++){const v=min+(max-min)*j/5;out+=`<line x1="${pad.l}" x2="${W-pad.r}" y1="${y(v)}" y2="${y(v)}" stroke="#2c3632"/><text x="${pad.l-10}" y="${y(v)+4}" text-anchor="end" font-size="13">${fmt(v)}</text>`;}
   const count=W<650?4:7;
-  for(let j=0;j<=count;j++){const t=t0+(t1-t0)*j/count,d=new Date(t).toISOString().slice(0,7).replace('-','.');out+=`<line x1="${x(t)}" x2="${x(t)}" y1="${pad.t}" y2="${H-pad.b}" stroke="#27312d"/><text x="${x(t)}" y="${H-18}" text-anchor="middle" font-size="13">${d}</text>`;}
+  for(let j=0;j<=count;j++){const t=t0+(t1-t0)*j/count,d=new Date(t).toISOString().slice(0,7).replace('-','.');out+=`<line x1="${x(t)}" x2="${x(t)}" y1="${pad.t}" y2="${H-pad.b}" stroke="#27312d"/><text x="${x(t)}" y="${H-18}" text-anchor="${j===0?'start':j===count?'end':'middle'}" font-size="13">${d}</text>`;}
   for(const [band,opacity] of [[95,.10],[90,.15],[68,.23]]){
     if(band>coverage)continue;
     const upper=linePath(f,`upper${band}`,x,y),lower=[...f].reverse().map(row=>`L${x(stamp(row.date)).toFixed(2)},${y(row[`lower${band}`]).toFixed(2)}`).join(' ');
@@ -132,10 +132,13 @@ export function renderFxChart(snapshot, months=12, years=3, width=1040, coverage
   out+=`<line x1="${x(stamp(last.date))}" x2="${W-pad.r}" y1="${y(last.spot)}" y2="${y(last.spot)}" stroke="#5fa9df" stroke-opacity=".5" stroke-dasharray="3 5"/>`;
   out+=`<path d="${linePath(history,'spot',x,y)}" fill="none" stroke="#55a9ed" stroke-width="1.9" stroke-linejoin="round"/><path d="${linePath(f,'mean',x,y)}" fill="none" stroke="#efaaa3" stroke-width="2" stroke-dasharray="5 5"/>`;
   out+=`<line x1="${x(stamp(last.date))}" x2="${x(stamp(last.date))}" y1="${pad.t-6}" y2="${H-pad.b}" stroke="#b0b5ac" stroke-dasharray="4 5"/><text x="${x(stamp(last.date))+7}" y="${pad.t-13}" text-anchor="${x(stamp(last.date))>W-100?'end':'start'}" font-size="12">전망 →</text>`;
-  const quarters=quarterRows(forecast),available=W-pad.r-x(stamp(last.date)),stride=Math.max(1,Math.ceil(quarters.length/Math.max(1,Math.floor(available/70))));
-  quarters.forEach(([label,row],i)=>{
-    if((quarters.length-1-i)%stride)return;
+  const quarters=quarterRows(forecast);let nextLabelLeft=Infinity;
+  [...quarters].reverse().forEach(([label,row])=>{
     const px=x(stamp(row.date)),py=y(row.mean),nearEnd=px>W-65,align=nearEnd?'end':'middle',dx=nearEnd?-5:0;
+    const labelWidth=Math.max(quarterDisplay(label,row).slice(2).length,fmt(row.mean).length)*7.5;
+    const labelLeft=px+dx-labelWidth*(nearEnd?1:.5),labelRight=px+dx+labelWidth*(nearEnd?0:.5);
+    if(labelRight>nextLabelLeft-14)return;
+    nextLabelLeft=labelLeft;
     out+=`<circle cx="${px}" cy="${py}" r="3.2" fill="#f1b7b0"/><text x="${px+dx}" y="${py-24}" text-anchor="${align}" font-size="12" style="fill:#edaaa2">${quarterDisplay(label,row).slice(2)}</text><text x="${px+dx}" y="${py-9}" text-anchor="${align}" font-size="12" style="fill:#edaaa2">${fmt(row.mean)}</text>`;
   });
   out+=`<circle cx="${x(stamp(last.date))}" cy="${y(last.spot)}" r="3" fill="#dfe9f0"/></svg>`;
@@ -146,6 +149,27 @@ export function renderFxRegimes(snapshot) {
   const cards=regimes.map((r,i)=>`<article class="fx-regime-card" style="--regime-color:${COLORS[i]}"><div class="fx-regime-top"><h3>${esc(r.label)}</h3><span>국면 ${i+1}</span></div><strong class="fx-regime-prob">${fmt(currentProbs[i]*100,2)}<small>%</small></strong><div class="fx-prob-track"><i style="width:${currentProbs[i]*100}%"></i></div><dl><div><dt>일평균 로그수익률</dt><dd>${fmt(r.meanDailyPct,3)}%</dd></div><div><dt>일 변동성</dt><dd>${fmt(r.volDailyPct,3)}%</dd></div><div><dt>잔류확률</dt><dd>${fmt(r.persistence*100,2)}%</dd></div><div><dt>평균 지속기간</dt><dd>${r.persistence===1?'∞':fmt(1/(1-r.persistence),1)}일</dd></div></dl></article>`).join('');
   const matrix=`<table class="fx-transition"><thead><tr><th>현재 → 다음 관측</th>${regimes.map(r=>`<th>${esc(r.label)}</th>`).join('')}</tr></thead><tbody>${transition.map((row,i)=>`<tr><th>${esc(regimes[i].label)}</th>${row.map(v=>`<td style="background:rgba(125,169,163,${(.03+.30*v).toFixed(3)})">${fmt(v*100,2)}%</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   return {cards,matrix};
+}
+export function renderFxProbabilities(snapshot, years=3, width=1040) {
+  const {history}=selectFxWindow(snapshot,12,years);
+  const hasProbs=row=>Array.isArray(row.probs)&&row.probs.length===3&&row.probs.every(p=>typeof p==='number'&&Number.isFinite(p)&&p>=0&&p<=1)&&Math.abs(row.probs.reduce((sum,p)=>sum+p,0)-1)<=1e-5;
+  if(!history.some(hasProbs))return '<div class="fx-probability-empty small" role="status">확률 데이터 미연결</div>';
+  const numericWidth=Number(width),W=Math.max(420,Math.min(1600,Number.isFinite(numericWidth)&&numericWidth>0?numericWidth:1040)),H=280,pad={l:58,r:24,t:20,b:42};
+  const start=stamp(history[0].date),end=Math.max(start+86400000,stamp(history.at(-1).date));
+  const x=t=>pad.l+(t-start)/(end-start)*(W-pad.l-pad.r),y=p=>H-pad.b-p*(H-pad.t-pad.b);
+  let out=`<div class="fx-chart-legend">${snapshot.model.regimes.map((r,i)=>`<span><i style="background:${COLORS[i]}"></i>${esc(r.label)}</span>`).join('')}</div><svg viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="fxProbabilitiesTitle fxProbabilitiesDesc"><title id="fxProbabilitiesTitle">과거 3국면 필터 확률</title><desc id="fxProbabilitiesDesc">${esc(history[0].date)} ~ ${esc(history.at(-1).date)}. 전체 추정표본 모수의 필터 확률. 확률 누락 구간은 연결하지 않음.</desc>`;
+  for(let j=0;j<=4;j++){const p=j/4;out+=`<line x1="${pad.l}" x2="${W-pad.r}" y1="${y(p)}" y2="${y(p)}" stroke="#2c3632"/><text x="${pad.l-9}" y="${y(p)+4}" text-anchor="end" font-size="12">${fmt(p*100)}%</text>`;}
+  const ticks=W<650?3:6;
+  for(let j=0;j<=ticks;j++){const t=start+(end-start)*j/ticks;out+=`<text x="${x(t)}" y="${H-13}" text-anchor="${j===0?'start':j===ticks?'end':'middle'}" font-size="12">${new Date(t).toISOString().slice(0,7).replace('-','.')}</text>`;}
+  const segments=[];let segment=[];
+  for(const row of history){if(hasProbs(row))segment.push(row);else if(segment.length){segments.push(segment);segment=[];}}
+  if(segment.length)segments.push(segment);
+  for(let state=0;state<3;state++){
+    const path=segments.filter(rows=>rows.length>1).map(rows=>rows.map((row,i)=>`${i?'L':'M'}${x(stamp(row.date)).toFixed(2)},${y(row.probs[state]).toFixed(2)}`).join(' ')).join(' ');
+    if(path)out+=`<path data-state="${state+1}" d="${path}" fill="none" stroke="${COLORS[state]}" stroke-width="1.7" stroke-linejoin="round"/>`;
+    for(const rows of segments.filter(rows=>rows.length===1)){const row=rows[0];out+=`<circle data-state="${state+1}" cx="${x(stamp(row.date)).toFixed(2)}" cy="${y(row.probs[state]).toFixed(2)}" r="2.5" fill="${COLORS[state]}"><title>${esc(row.date)} · ${esc(snapshot.model.regimes[state].label)} ${fmt(row.probs[state]*100,2)}%</title></circle>`;}
+  }
+  return out+'</svg>';
 }
 export function renderFxTable(snapshot, months=12) {
   const forecast=snapshot.forecast.slice(0,Math.round(months*21));
@@ -178,7 +202,7 @@ function validationMarkup(snapshot) {
 export function mountFxModel(documentRoot=document) {
   const host=documentRoot.getElementById('fxModelHost');if(!host)return null;
   const $=id=>documentRoot.getElementById(id);let snapshot=null,months=12,years=3,coverage=95,showTable=false;
-  host.innerHTML=`<div class="fx-model-toolbar"><div><h2>USDKRW <span class="pill">MARKOV · 3 REGIMES</span></h2><span id="fxModelSource" class="small">데이터 미연결</span></div><div class="fx-toolbar-actions"><button id="fxModelImport" class="button secondary">데이터 불러오기</button><input type="file" id="fxModelFile" accept=".json,application/json" hidden></div></div><div id="fxModelError" class="fx-model-error" role="alert" hidden></div><div id="fxModelWarning" class="fx-model-error" role="status" hidden></div><div id="fxModelMetrics" class="fx-model-metrics"></div><article class="panel fx-forecast-panel"><div class="fx-chart-toolbar"><div class="fx-chart-selectors"><label>과거 <select id="fxModelHistory" aria-label="과거 표시기간"><option value="1">1년</option><option value="3" selected>3년</option><option value="5">5년</option><option value="0">전체</option></select></label><label>전망 <select id="fxModelHorizon" aria-label="전망 표시기간"><option value="3">3개월</option><option value="6">6개월</option><option value="12" selected>12개월</option><option value="24">24개월</option></select></label><label>예측구간 <select id="fxModelCoverage" aria-label="예측구간 표시 범위"><option value="68">68%</option><option value="90">90%</option><option value="95" selected>95%</option></select></label></div><div class="fx-toolbar-actions"><button id="fxModelTableButton" class="button secondary" aria-expanded="false" aria-controls="fxModelTable" disabled>표</button><button id="fxModelCSV" class="button secondary" disabled>CSV</button></div></div><div class="fx-chart-legend"><span><i class="fx-line-history"></i>원/달러</span><span><i class="fx-line-mean"></i>모형 평균</span><span><i class="fx-band-68"></i>68%</span><span id="fxLegend90"><i class="fx-band-90"></i>90%</span><span id="fxLegend95"><i class="fx-band-95"></i>95% 예측구간</span></div><div id="fxModelChart" class="chart-wrap fx-model-chart"><div class="fx-model-empty"><span>USDKRW</span><strong>전망 데이터 미연결</strong></div></div><div id="fxModelTable" class="table-scroll fx-model-table" hidden></div><div class="fx-chart-meta"><span id="fxModelPeriod">원/달러 · 조건부 예측구간</span><span id="fxModelSample"></span></div></article><div id="fxModelDetails" hidden><div class="section-heading fx-regime-heading"><h2>현재 국면 확률</h2><span class="small" id="fxModelRegimeDate"></span></div><div id="fxModelRegimes" class="fx-regime-grid"></div><article class="panel fx-transition-panel"><div class="panel-heading"><h2>국면 전이확률</h2><span class="small">다음 관측일 · 행 → 열</span></div><div id="fxModelTransition" class="table-scroll"></div></article><details class="fx-method"><summary>모형·불확실성·검증</summary><dl id="fxModelMethod"></dl></details></div>`;
+  host.innerHTML=`<div class="fx-model-toolbar"><div><h2>USDKRW <span class="pill">MARKOV · 3 REGIMES</span></h2><span id="fxModelSource" class="small">데이터 미연결</span></div><div class="fx-toolbar-actions"><button id="fxModelImport" class="button secondary">데이터 불러오기</button><input type="file" id="fxModelFile" accept=".json,application/json" hidden></div></div><div id="fxModelError" class="fx-model-error" role="alert" hidden></div><div id="fxModelWarning" class="fx-model-error" role="status" hidden></div><div id="fxModelMetrics" class="fx-model-metrics"></div><article class="panel fx-forecast-panel"><div class="fx-chart-toolbar"><div class="fx-chart-selectors"><label>과거 <select id="fxModelHistory" aria-label="과거 표시기간"><option value="1">1년</option><option value="3" selected>3년</option><option value="5">5년</option><option value="0">전체</option></select></label><label>전망 <select id="fxModelHorizon" aria-label="전망 표시기간"><option value="3">3개월</option><option value="6">6개월</option><option value="12" selected>12개월</option><option value="24">24개월</option></select></label><label>예측구간 <select id="fxModelCoverage" aria-label="예측구간 표시 범위"><option value="68">68%</option><option value="90">90%</option><option value="95" selected>95%</option></select></label></div><div class="fx-toolbar-actions"><button id="fxModelTableButton" class="button secondary" aria-expanded="false" aria-controls="fxModelTable" disabled>표</button><button id="fxModelCSV" class="button secondary" disabled>CSV</button></div></div><div class="fx-chart-legend"><span><i class="fx-line-history"></i>원/달러</span><span><i class="fx-line-mean"></i>모형 평균</span><span><i class="fx-band-68"></i>68%</span><span id="fxLegend90"><i class="fx-band-90"></i>90%</span><span id="fxLegend95"><i class="fx-band-95"></i>95% 예측구간</span></div><div id="fxModelChart" class="chart-wrap fx-model-chart"><div class="fx-model-empty"><span>USDKRW</span><strong>전망 데이터 미연결</strong></div></div><div id="fxModelTable" class="table-scroll fx-model-table" hidden></div><div class="fx-chart-meta"><span id="fxModelPeriod">원/달러 · 조건부 예측구간</span><span id="fxModelSample"></span></div></article><div id="fxModelDetails" hidden><div class="section-heading fx-regime-heading"><h2>현재 국면 확률</h2><span class="small" id="fxModelRegimeDate"></span></div><div id="fxModelRegimes" class="fx-regime-grid"></div><article class="panel fx-probability-panel"><div class="panel-heading"><h2>국면 확률 추이</h2><span class="small">필터 확률 · 전체표본 모수</span></div><div id="fxModelProbabilities" class="chart-wrap fx-probability-chart"></div></article><article class="panel fx-transition-panel"><div class="panel-heading"><h2>국면 전이확률</h2><span class="small">다음 관측일 · 행 → 열</span></div><div id="fxModelTransition" class="table-scroll"></div></article><details class="fx-method"><summary>모형·불확실성·검증</summary><dl id="fxModelMethod"></dl></details></div>`;
   function render(){
     if(!snapshot)return;
     const last=snapshot.history.at(-1),end=selectFxWindow(snapshot,months,years).forecast.at(-1),delta=(end.mean/last.spot-1)*100;
@@ -192,9 +216,23 @@ export function mountFxModel(documentRoot=document) {
     $('fxModelPeriod').textContent=`최근 ${fmt(last.spot)} · ${last.date} · 원/달러 · * 전망기간 말`;
     $('fxModelSample').textContent=`추정 ${snapshot.meta.start} ~ ${snapshot.meta.end} · ${fmt(snapshot.meta.n)}개 환율관측`;
     const regime=renderFxRegimes(snapshot);$('fxModelRegimes').innerHTML=regime.cards;$('fxModelTransition').innerHTML=regime.matrix;
+    $('fxModelProbabilities').innerHTML=renderFxProbabilities(snapshot,years,$('fxModelProbabilities').clientWidth||1040);
     $('fxModelRegimeDate').textContent=snapshot.meta.asOf;$('fxModelMethod').innerHTML=validationMarkup(snapshot);$('fxModelDetails').hidden=false;
   }
+  function clear(){
+    snapshot=null;showTable=false;
+    $('fxModelSource').textContent='데이터 미연결';
+    for(const id of ['fxModelMetrics','fxModelTable','fxModelRegimes','fxModelProbabilities','fxModelTransition','fxModelMethod'])$(id).innerHTML='';
+    for(const id of ['fxModelError','fxModelWarning']){$(id).textContent='';$(id).hidden=true;}
+    $('fxModelChart').innerHTML='<div class="fx-model-empty"><span>USDKRW</span><strong>전망 데이터 미연결</strong></div>';
+    $('fxModelDetails').hidden=true;$('fxModelTable').hidden=true;
+    $('fxModelTableButton').disabled=true;$('fxModelTableButton').setAttribute('aria-expanded','false');$('fxModelCSV').disabled=true;
+    $('fxModelPeriod').textContent='원/달러 · 조건부 예측구간';$('fxModelSample').textContent='';$('fxModelRegimeDate').textContent='';
+    [...$('fxModelHorizon').options].forEach(option=>option.disabled=false);
+    return null;
+  }
   function install(raw){
+    if(raw===null)return clear();
     const next=normalizeFxModel(raw);snapshot=next;
     const options=[...$('fxModelHorizon').options];options.forEach(option=>option.disabled=Number(option.value)*21>next.forecast.length);
     if(months*21>next.forecast.length){const available=options.filter(option=>!option.disabled);months=available.length?Number(available.at(-1).value):next.forecast.length/21;}
@@ -213,6 +251,5 @@ export function mountFxModel(documentRoot=document) {
   $('fxModelTableButton').onclick=()=>{showTable=!showTable;$('fxModelTable').hidden=!showTable;$('fxModelTableButton').setAttribute('aria-expanded',String(showTable));};
   $('fxModelCSV').onclick=()=>{if(!snapshot)return;const url=URL.createObjectURL(new Blob([fxModelCSV(snapshot,months,years)],{type:'text/csv;charset=utf-8;'}));const a=documentRoot.createElement('a');a.href=url;a.download=`USDKRW_Markov3_${snapshot.meta.asOf}_${months}M.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
   if(typeof ResizeObserver!=='undefined'){let previous=0;new ResizeObserver(entries=>{const width=entries[0].contentRect.width;if(width>0&&width!==previous){previous=width;render();}}).observe($('fxModelChart'));}
-  return {install,getSnapshot:()=>snapshot};
+  return {install,clear,getSnapshot:()=>snapshot};
 }
-if(typeof document!=='undefined')mountFxModel(document);

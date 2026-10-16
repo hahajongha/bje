@@ -1,4 +1,7 @@
 import { normalizeFxHedge } from './fx-hedge.mjs';
+import { normalizeHedgeAnalytics } from './hedge-analytics.mjs';
+import { normalizeFxAnalyticsSpots } from './fx-workspace.mjs';
+import { normalizeFxModel } from './fx-model-ui.mjs';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (value, digits=2) => Number.isFinite(value) ? value.toLocaleString('ko-KR', {minimumFractionDigits:digits, maximumFractionDigits:digits}) : '—';
@@ -85,7 +88,23 @@ export function normalizeDataInfo(raw) {
     checkDate(pair.asOf,'프리미엄 관측일',meta.latestObservation);
     checkDate(pair.volAsOf,'환 변동성 관측일',meta.latestObservation);
   }
-  return {kind:'bje_data_info',schemaVersion:1,meta,market,bond,fxHedge};
+  let fxAnalytics=null,fxModel=null;
+  if(raw.fxAnalytics!=null){
+    const hedge=normalizeHedgeAnalytics(raw.fxAnalytics),fx=normalizeFxAnalyticsSpots(raw.fxAnalytics);
+    if(hedge.asOf!==asOf)throw Error('Hedge·FX 분석자료 기준일이 일치하지 않습니다.');
+    fxAnalytics={...hedge,spots:fx.spots};
+    for(const pair of hedge.ratePairs)for(const row of pair.history)if(row.date>meta.latestObservation)throw Error('금리차 비교의 관측일을 확인하십시오.');
+    for(const spot of fx.spots)for(const row of spot.history)if(row.date>meta.latestObservation)throw Error('FX 모니터링의 관측일을 확인하십시오.');
+  }
+  if(raw.fxModel!=null){
+    fxModel=normalizeFxModel(raw.fxModel);
+    if(fxModel.meta.asOf>meta.latestObservation)throw Error('FX 모형의 기준일을 확인하십시오.');
+    const modelHash=raw.fxModel.meta.provenance?.primary?.sha256;
+    if(modelHash!=null&&modelHash!==meta.sha256)throw Error('FX 모형과 시장자료의 원본 해시가 일치하지 않습니다.');
+    const usd=new Map((fxAnalytics?.spots.find(s=>s.id==='usdkrw')?.history??[]).map(r=>[r.date,r.value]));
+    for(const row of fxModel.history)if(usd.size&&(!usd.has(row.date)||Math.abs(usd.get(row.date)-row.spot)>1e-8))throw Error('FX 모형과 모니터링의 원/달러 관측값이 일치하지 않습니다.');
+  }
+  return {kind:'bje_data_info',schemaVersion:1,meta,market,bond,fxHedge,fxAnalytics,fxModel};
 }
 
 export function renderMarketMarkup(snapshot) {
@@ -167,7 +186,7 @@ export function renderHistogramMarkup(snapshot, years='5') {
   }).join('');
 }
 
-export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{}}={}) {
+export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{},onAnalytics=()=>{},onModel=()=>{}}={}) {
   const $=id=>doc.getElementById(id);
   let snapshot=null,hedge=normalizeFxHedge(null),years='5';
   function renderHedge(next) {
@@ -187,6 +206,8 @@ export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{}}
     $('bondReference').innerHTML=bondMarkup;
     onHedge(next.fxHedge);
     renderHedge(next.fxHedge);
+    onAnalytics(next.fxAnalytics);
+    onModel(next.fxModel);
     $('dataInfoError').hidden=true;
     return next;
   }

@@ -5,6 +5,8 @@ import { renderRiskMarkup } from './risk.mjs';
 import { defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios } from './allocation.mjs';
 import { frontierTarget } from './frontier-target.mjs';
 import { initDataInfoUI } from './data-info-ui.mjs';
+import { mountHedgeAnalytics } from './hedge-analytics.mjs';
+import { mountFxWorkspace } from './fx-workspace.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#bddb9c','#80b6a5','#d7bb86','#87a6c0','#b5a5c7','#b68e81','#7ec9cf'];
@@ -15,7 +17,8 @@ const zValues = {'.68':0.994457883,'.9':1.644853627,'.95':1.959963985,'.99':2.57
 const fmt = (x,n=2) => Number.isFinite(x) ? x.toLocaleString('ko-KR',{minimumFractionDigits:n,maximumFractionDigits:n}) : '—';
 const esc = x => String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data, initial, state, results, cov, chosen='current', period=60, toastTimer, cacheKey, fxSnapshot=normalizeFxHedge(null), cloud=[], exploredIndex=0, selectedAssetIndex=null, frontierMode='same-risk', frontierComparison=null, frontierAxes={};
-const dataInfoUI=initDataInfoUI({document,onHedge:next=>{fxSnapshot=next;renderHedge();}});
+const hedgeAnalytics=mountHedgeAnalytics(document),fxWorkspace=mountFxWorkspace(document);
+const dataInfoUI=initDataInfoUI({document,onHedge:next=>{fxSnapshot=next;renderHedge();},onAnalytics:next=>{hedgeAnalytics?.install(next);fxWorkspace?.installAnalytics(next);},onModel:next=>fxWorkspace?.installModel(next)});
 
 function normalizeData(raw) {
   if(!raw || !Array.isArray(raw.assets) || raw.assets.length<2 || raw.assets.length>8) throw Error('자산 수는 2~8개여야 합니다.');
@@ -62,7 +65,7 @@ function install(raw,restore=true){
   }}catch{/* incompatible saved state is ignored */}
   validateState(nextState);
   data=nextData;initial=nextInitial;state=nextState;cacheKey=nextKey;
-  if(Object.hasOwn(data,'fxHedge') || !dataInfoUI.getSnapshot()) fxSnapshot=normalizeFxHedge(data.fxHedge);
+  if(Object.hasOwn(data,'fxHedge') || !dataInfoUI.getSnapshot()){fxSnapshot=normalizeFxHedge(data.fxHedge);hedgeAnalytics?.install(null);}
   chosen='current';selectedAssetIndex=null;renderInputs();recalculate();renderAllocationInputs();renderHistory();renderHedge();
 }
 function recalculate(){
@@ -325,8 +328,9 @@ $('hedgeImportFile').onchange=async event=>{
   try{
     if(file.size>5e6)throw Error('JSON 파일은 5MB 이하여야 합니다.');
     const raw=JSON.parse(await file.text());
-    const next=normalizeFxHedge(raw.fxHedge??raw);
-    fxSnapshot=next;renderHedge();message('환헤지 데이터 적용 · 새로고침 시 초기화');
+    if(raw.kind==='bje_data_info')dataInfoUI.apply(raw);
+    else{const next=normalizeFxHedge(raw.fxHedge??raw);fxSnapshot=next;renderHedge();hedgeAnalytics?.install(null);}
+    message('환헤지 데이터 적용 · 새로고침 시 초기화');
   }catch(error){message('환헤지 데이터를 불러오지 못했습니다: '+error.message,true);}
   finally{event.target.value='';}
 };

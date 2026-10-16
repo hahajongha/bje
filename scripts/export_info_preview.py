@@ -27,15 +27,16 @@ def export_preview(snapshot_path, output_path):
                 raise ValueError('Portfolio bootstrap changed; inspect exporter before proceeding.')
             source = source.replace(old, "Promise.resolve({ok:true,json:async()=>JSON.parse(document.getElementById('portfolioEmbedded').textContent)})")
         imports['bje:' + path.stem] = 'data:text/javascript;base64,' + base64.b64encode(source.encode()).decode()
-    css = (dist / 'styles.css').read_text(encoding='utf-8')
     html = (dist / 'index.html').read_text(encoding='utf-8')
-    html = html.replace('<link rel="stylesheet" href="styles.css">', '<style>' + css + '</style>')
+    for css_path in dist.glob('*.css'):
+        html = html.replace(f'<link rel="stylesheet" href="{css_path.name}">', '<style>' + css_path.read_text(encoding='utf-8') + '</style>')
     html = re.sub(r'<script type="module" src="[^"]+"></script>', '', html)
     safe_json = lambda value: json.dumps(value, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')
     script = '\n<script type="application/json" id="dataInfoEmbedded">' + safe_json(payload) + '</script>'
     script += '\n<script type="application/json" id="portfolioEmbedded">' + safe_json(json.loads((dist / 'data.json').read_text(encoding='utf-8'))) + '</script>'
     script += '\n<script type="importmap">' + safe_json({'imports': imports}) + '</script>'
-    script += '''\n<script type="module">import "bje:app"; import "bje:fx-model-ui"; document.querySelector('[data-tab="risk"]').click();</script>\n'''
+    initial_tab = 'hedge' if payload.get('fxAnalytics') else 'risk'
+    script += f'''\n<script type="module">import "bje:app"; document.querySelector('[data-tab="{initial_tab}"]').click();</script>\n'''
     html = html.replace('</body>', script + '</body>')
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding='utf-8')

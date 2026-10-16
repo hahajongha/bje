@@ -11,14 +11,13 @@
   <div class="nav-label">WORKSPACE</div>
   <nav aria-label="주 메뉴">
     <button class="nav-item active" data-tab="overview"><span>◫</span> 포트폴리오 <i>01</i></button>
-    <button class="nav-item" data-tab="assumptions"><span>☷</span> 투자 가정 <i>02</i></button>
-    <button class="nav-item" data-tab="sources"><span>▤</span> 데이터 노트 <i>03</i></button>
+    <button class="nav-item" data-tab="assumptions"><span>☷</span> CMA <i>02</i></button>
   </nav>
   <div class="sidebar-bottom"><span class="avatar">B</span><div>BJE Workspace<small>Asset allocation research</small></div></div>
 </aside>
 <div class="shell">
   <main>
-    <div class="page-heading"><div><div class="eyebrow">INVEST WITH PERSPECTIVE</div><h1 id="pageTitle">포트폴리오 대시보드<span>.</span></h1><p id="pageSubtitle" hidden></p></div><div class="heading-actions"><button class="button secondary" id="exportButton"><span>↓</span> 결과 내보내기</button><button class="button primary" id="editButton">투자 가정 편집 <span>↗</span></button></div></div>
+    <div class="page-heading"><div><div class="eyebrow">INVEST WITH PERSPECTIVE</div><h1 id="pageTitle">포트폴리오 대시보드<span>.</span></h1></div><div class="heading-actions"><button class="button secondary" id="exportButton"><span>↓</span> 결과 내보내기</button><button class="button primary" id="editButton">투자 가정 편집 <span>↗</span></button></div></div>
     <div id="alert" role="alert" hidden></div>
     <div class="data-strip"><span><span class="live-dot"></span> <strong id="sourceLabel">데이터 확인 중</strong></span><span id="dateLabel">—</span><span id="sampleLabel">—</span><span class="strip-end" id="assumptionLabel">연율 기준</span></div>
     <section id="overview" class="tab-panel">
@@ -36,13 +35,9 @@
       <p class="method-footnote">수익률 범위는 정규분포를 가정한 1년 실현수익률 구간입니다. 추정치의 신뢰구간이 아니며, 거래비용·세금은 반영하지 않습니다.</p>
     </section>
     <section id="assumptions" class="tab-panel" hidden>
-      <article class="panel input-panel"><div class="panel-heading"><div><div class="eyebrow">CAPITAL MARKET ASSUMPTIONS</div><h2>자산별 투자 가정</h2></div><span class="pill">연율 · % 단위</span></div><p class="panel-description">초기 수익률·변동성은 데이터의 과거 표본 추정치입니다. 전망치를 직접 입력하면 사용자 가정으로 표시됩니다. 현재 비중은 예시에서 시작합니다.</p><div class="table-scroll"><table class="input-table"><thead><tr><th>자산군</th><th>수익률 %</th><th>변동성 %</th><th>현재 비중 %</th></tr></thead><tbody id="assetInputs"></tbody></table></div><div class="input-settings"><label>무위험금리 % <input id="riskFreeInput" type="number" step="0.01" value="2.5"></label><span id="weightSum">비중 합계 —</span><button class="text-button" id="normalizeButton">비중을 100%로 정규화</button></div></article>
+      <article class="panel input-panel"><div class="panel-heading"><div><div class="eyebrow">CAPITAL MARKET ASSUMPTIONS</div><h2>자산별 투자 가정</h2></div><span class="pill">연율 · % 단위</span></div><div class="table-scroll"><table class="input-table"><thead><tr><th>자산군</th><th>수익률 %</th><th>변동성 %</th><th>현재 비중 %</th></tr></thead><tbody id="assetInputs"></tbody></table></div><div class="input-settings"><label>무위험금리 % <input id="riskFreeInput" type="number" step="0.01" value="2.5"></label><span id="weightSum">비중 합계 —</span><button class="text-button" id="normalizeButton">비중을 100%로 정규화</button></div></article>
       <article class="panel correlation-panel"><div class="panel-heading"><div><div class="eyebrow">DIVERSIFICATION</div><h2>상관관계</h2></div><span class="small">대칭 적용 · −1 ~ 1</span></div><div class="table-scroll" id="correlationInputs"></div></article>
-      <div class="form-actions"><button class="button secondary" id="resetButton">초기 가정 복원</button><button class="button primary" id="applyButton">가정 적용 <span>→</span></button><span class="small" id="saveStatus">변경사항은 적용 후 이 브라우저에 저장됩니다.</span></div>
-    </section>
-    <section id="sources" class="tab-panel" hidden>
-      <div class="sources-grid"><article class="panel"><div class="eyebrow">DATA PROVENANCE</div><h2>데이터와 관측 범위</h2><div id="sourceNotes"></div></article><article class="panel"><div class="eyebrow">MODEL NOTES</div><h2>계산의 전제</h2><ul class="notes-list"><li>수익률: 공통 월별 단순수익률의 산술평균 × 12</li><li>공분산: 표본 월별 공분산 × 12. 월별 시계열 상관은 무시합니다.</li><li>S&P 500 USD 총수익지수는 원/달러 환율로 환산합니다. IEF·LQD·BIL 원자료는 이미 KRW로 요청되어 추가 환산하지 않습니다.</li><li>공매도와 차입 없이 비중 합계 100%. 자산별 상한·거래비용은 미적용입니다.</li><li>최소분산·목표수익률·최대 Sharpe는 활성 자산 조합을 전수 계산합니다.</li><li>무위험금리는 비교용 사용자 가정이며 투자 가능한 무위험 자산은 아닙니다.</li><li>원화 비헤지 달러 단기채는 환율 위험을 포함하므로 현금성 무위험 자산이 아닙니다.</li><li>과거 평균을 활용한 최적화는 미래의 우월한 성과를 입증하지 않습니다.</li></ul></article></div>
-      <article class="panel import-panel"><div><div class="eyebrow">BRING YOUR DATA</div><h2>데이터 스냅샷 불러오기</h2><p>동일 형식의 JSON 데이터를 이 브라우저에서 불러옵니다. 업로드한 파일은 서버로 전송하지 않습니다.</p></div><label class="button secondary" for="importFile">JSON 파일 선택 <span>↑</span></label><input type="file" id="importFile" accept=".json,application/json" hidden></article>
+      <div class="form-actions"><label class="button secondary" for="importFile">JSON 불러오기 <span>↑</span></label><input type="file" id="importFile" accept=".json,application/json" hidden><button class="button secondary" id="resetButton">초기 가정 복원</button><button class="button primary" id="applyButton">가정 적용 <span>→</span></button><span class="small" id="saveStatus">변경사항은 적용 후 이 브라우저에 저장됩니다.</span></div>
     </section>
     <footer><span><strong>BJE</strong> PORTFOLIO LAB</span><span>Clarity in every allocation.</span><span id="footerVersion">RESEARCH WORKSPACE / 01</span></footer>
   </main>

@@ -14,6 +14,7 @@
     <button class="nav-item active" data-tab="overview"><span>◫</span> 포트폴리오</button>
     <button class="nav-item" data-tab="assumptions"><span>☷</span> CMA</button>
     <button class="nav-item" data-tab="hedge"><span>⇄</span> 환헤지</button>
+    <button class="nav-item" data-tab="fxmodel"><span>⌁</span> 환율모형</button>
   </nav>
 </aside>
 <div class="shell">
@@ -67,8 +68,10 @@
       <div id="hedge-modelA" class="hedge-panel" hidden><article class="panel hedge-model-empty"><h2>환헤지모델A</h2><span class="small">모형 미설정</span></article></div>
       <div id="hedge-modelB" class="hedge-panel" hidden><article class="panel hedge-model-empty"><h2>환헤지모델B</h2><span class="small">모형 미설정</span></article></div>
     </section>
+    <section id="fxmodel" class="tab-panel" hidden><div id="fxModelHost"></div></section>
     <footer><span><strong>BJE</strong> PORTFOLIO LAB</span><span>Clarity in every allocation.</span><span id="footerVersion">RESEARCH WORKSPACE / 01</span></footer>
   </main>
 </div><div id="toast" role="status" hidden></div>
 <script type="module" src="app.mjs"></script>
+<script type="module" src="fx-model-ui.mjs"></script>
 </body></html>

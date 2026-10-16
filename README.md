@@ -129,3 +129,40 @@ BJE_TEST_DATA=/private/portfolio.json node --test tests/ui-smoke.test.mjs
 2026-10-16 검증: Node 계산/DOM 대역 36개, 해석해·별도 격자 대조, 7자산 난수 SPD/제약 40개에 대한 SciPy SLSQP 120개 목적함수 대조를 수행했습니다. 별도 SciPy 경로와의 최대 차이는 분산 2.14e-11 %p², Sharpe 9.29e-13이었습니다. 재현 명령은 `python scripts/verify_allocation.py`이며 NumPy·SciPy가 별도로 필요합니다. 이는 계산 검증이고 가상 입력의 실증 검증은 아닙니다.
 
 생성한 SVG의 800px/360px 래스터 확인은 수행했습니다. 좁은 차트의 자산명은 겹침 방지를 위해 생략하고 점 제목·자산 구성표에서 확인하도록 했습니다. 실제 브라우저 실행 파일 다운로드 실패로 전체 페이지 배치·네이티브 입력·기기별 글꼴 렌더링은 검증하지 못했습니다.
+
+
+## USDKRW 3국면 환율모형
+
+좌측 `환율모형`은 USDKRW 일별 로그수익률의 Gaussian Markov Switching 모형을 표시합니다. 추정은 Python, 화면은 정적 ES module로 분리되어 있으며 `데이터 불러오기`에서 실제 추정 JSON을 읽습니다. Drive 자동 갱신이나 브라우저 재추정은 없습니다. 실제 관측값과 추정 결과는 공개 저장소에 넣지 않으며 기존 데이터 경계를 유지합니다.
+
+### 정의와 불확실성
+
+- 관측식: `r_t = log(S_t / S_(t-1)) = mu[state_t] + sigma[state_t] * epsilon_t`, 표준정규 독립 충격.
+- 전이행렬은 `P[i,j] = Pr(state_(t+1)=j | state_t=i)`로 행이 현재, 열이 다음 국면입니다. 세 국면은 추정 변동성 오름차순인 저변동·중변동·고변동이며 상승·하락 방향을 미리 강제하지 않습니다.
+- scaled Hamilton filter / forward-backward와 다중 초기값 EM으로 국면별 평균·분산·전이확률·초기확률을 추정합니다. 분산 하한은 전체 표본분산의 0.5%, 각 국면의 기대 점유율 하한은 0.5%입니다. 수렴한 허용 후보 중 우도가 가장 큰 해를 선택하며 전역최적은 보장하지 않습니다. 모든 후보 미수렴 시 경고를 남깁니다.
+- 현재 국면은 마지막 filtered probability입니다. 과거 확률은 전체표본에서 추정한 모수를 고정해 필터링한 값으로, 당시 이용 가능했던 정보만으로 모수까지 재추정한 실시간 결과가 아닙니다.
+- 전망 평균은 Markov 경로별 로그정규 기댓값의 정확 재귀식으로 계산합니다. 단순히 평균 로그수익을 지수화한 값과 구분합니다.
+- 기본 40,000개의 상태·충격 경로로 16/84, 5/95, 2.5/97.5 분위수의 68/90/95% 예측구간을 생성합니다. 국면별 충격분산과 미래 국면경로 불확실성을 모두 포함합니다. 누적 로그 표준편차는 정확한 1·2차 모멘트 재귀식으로 계산하여 시뮬레이션과 대조합니다.
+- 구간은 추정모수를 고정한 조건부 미래 실현값 범위입니다. 평균추정치의 신뢰구간이 아니며 모수 추정·모형 선택·구조변화 불확실성은 미포함입니다. 21관측을 1개월로 근사하고 미래 날짜에서는 토·일만 제외하므로 12개월(252관측) 종료일은 달력상 1년 후와 다릅니다.
+- 마지막 252관측은 별도 시간순 holdout으로 검사합니다. 이전 자료로만 모수를 추정·고정하고 실제 직전 관측까지 국면확률을 갱신해 다음 관측 환율의 RMSE/MAE와 예측구간 포함률을 평가합니다. 비교대상은 무드리프트 현물 랜덤워크이며, 이 일간 검증은 12·24개월 구간의 명목 커버리지를 입증하지 않습니다.
+
+### 원자료와 재현
+
+요청 당시 FICC 폴더에는 지정한 Excel이 없었습니다. 공유 원자료 `data_git`의 동명 최신 파일을 사용했습니다. `data_bb.xlsx / D!A,BB`의 `USDKRW CURNCY / PX_LAST`가 주계열이며 `data_info.xlsx / DailyRate!A,V`의 `USDKRW / 중간값`은 동일 날짜 비교에만 사용합니다. 두 값은 호가 정의·관측시점이 달라 연결하거나 대체하지 않습니다. 데이터 제공기관 add-in을 새로고침하지 않고 Excel 저장값을 읽습니다. 변환 시 양의 유한값, 날짜·중복·주말·10일 초과 공백, 헤더 정의를 검사하고 보간하지 않습니다. 원본 SHA256과 열 정의, 표본기간, 대조 결과를 비공개 JSON의 meta에 기록합니다.
+
+```bash
+python scripts/extract_fx_data.py --info /private/data_info.xlsx --bb /private/data_bb.xlsx --as-of YYYY-MM-DD --output /private/usdkrw-input.json
+python scripts/build_fx_model.py --input /private/usdkrw-input.json --source 'data_bb.xlsx · D!BB · USDKRW CURNCY · PX_LAST' --output /private/usdkrw-model.json
+python scripts/export_fx_preview.py --input /private/usdkrw-model.json --output /private/usdkrw-model.html
+node --test tests/*.test.mjs
+python -m unittest discover -s tests -p 'test_fx_markov.py'
+python scripts/verify_fx_markov.py
+```
+
+HTML 미리보기는 실제 JSON을 내부에 담으므로 비공개로 보관합니다. 코드에는 원본 파일·토큰·Drive ID를 넣지 않습니다. UI는 잘못된 확률합·날짜·구간 순서·국면 수를 거절하고 직전 정상 자료를 보존합니다. CSV에는 표시기간의 과거 관측과 모든 전망 관측을 기록합니다.
+
+### 근거와 검증 범위
+
+허용 저장소 `hahajongha/bje`에는 KG 모듈이 없어 KG 참조는 수행하지 못했습니다. 다른 저장소의 코드·지식그래프는 열지 않았습니다. 일반 모형과 필터의 근거는 [Hamilton, Regime-Switching Models](https://econweb.ucsd.edu/~jhamilto/palgrav1.pdf), 구현 참고는 [statsmodels 공식 Markov Switching 설명](https://www.statsmodels.org/stable/examples/notebooks/generated/markov_autoregression.html)입니다. 본 구현은 평균과 분산이 전환되는 3상태 로그수익률 모형이며 참고 예제의 시계열·모형을 복제한 결과가 아닙니다.
+
+독립 검증 스크립트는 짧은 지평의 모든 상태경로를 열거하여 필터·smoother·전이 count·누적 로그 모멘트·환율수준 기댓값과 비교하고, Gaussian mixture CDF를 역산해 시뮬레이션 분위수를 대조합니다. 흡수국면과 동일국면 경계조건도 확인합니다. 브라우저 실행 파일 다운로드 실패로 전체 브라우저의 네이티브 파일 입력·레이아웃 검증은 수행하지 못했으며, Node의 실제 이벤트 로직/DOM 대역과 SVG 래스터 확인으로 범위를 구분합니다.

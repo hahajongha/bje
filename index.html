@@ -3,32 +3,39 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111a19"><meta name="description" content="BJE Portfolio Lab — 자산배분, 효율적 경계선, 위험기여도 분석">
-  <title>BJE · Portfolio Lab</title><link rel="stylesheet" href="styles.css?v=06e70ce">
+  <title>BJE · Portfolio Lab</title><link rel="stylesheet" href="styles.css?v=451372b">
 </head>
 <body>
 <aside class="sidebar">
   <a class="brand" href="#overview" aria-label="BJE 홈"><span class="brand-symbol">b.</span><span>BJE<span class="brand-sub">PORTFOLIO LAB</span></span></a>
   <div class="nav-label">WORKSPACE</div>
   <nav aria-label="주 메뉴">
-    <button class="nav-item active" data-tab="overview"><span>◫</span> 포트폴리오 <i>01</i></button>
-    <button class="nav-item" data-tab="assumptions"><span>☷</span> CMA <i>02</i></button>
-    <button class="nav-item" data-tab="risk"><span>◈</span> 리스크 <i>03</i></button>
-    <button class="nav-item" data-tab="hedge"><span>⇄</span> 환헤지 <i>04</i></button>
+    <button class="nav-item" data-tab="risk"><span>◈</span> 리스크</button>
+    <button class="nav-item active" data-tab="overview"><span>◫</span> 포트폴리오</button>
+    <button class="nav-item" data-tab="assumptions"><span>☷</span> CMA</button>
+    <button class="nav-item" data-tab="hedge"><span>⇄</span> 환헤지</button>
+    <button class="nav-item" data-tab="fxmodel"><span>⌁</span> 환율모형</button>
   </nav>
-  <div class="sidebar-bottom"><span class="avatar">B</span><div>BJE Workspace<small>Asset allocation research</small></div></div>
 </aside>
 <div class="shell">
   <main>
-    <div class="page-heading"><div><div class="eyebrow">INVEST WITH PERSPECTIVE</div><h1 id="pageTitle">포트폴리오 대시보드<span>.</span></h1></div><div class="heading-actions"><button class="button secondary" id="exportButton"><span>↓</span> 결과 내보내기</button><button class="button primary" id="editButton">투자 가정 편집 <span>↗</span></button></div></div>
+    <div class="page-heading"><h1 id="pageTitle">포트폴리오 대시보드<span>.</span></h1></div>
     <div id="alert" role="alert" hidden></div>
-    <div class="data-strip"><span><span class="live-dot"></span> <strong id="sourceLabel">데이터 확인 중</strong></span><span id="dateLabel">—</span><span id="sampleLabel">—</span><span class="strip-end" id="assumptionLabel">연율 기준</span></div>
     <section id="overview" class="tab-panel">
       <div class="section-heading"><h2>포트폴리오 비교 <span class="pill">4 STRATEGIES</span></h2><div class="inline-control"><label for="coverage">1년 수익률 범위</label><select id="coverage"><option value=".68">68%</option><option value=".9" selected>90%</option><option value=".95">95%</option><option value=".99">99%</option></select></div></div>
       <div class="portfolio-cards" id="portfolioCards"></div>
       <div class="analysis-grid">
-        <article class="panel frontier-panel"><div class="panel-heading"><div><div class="eyebrow">RISK / RETURN</div><h2>효율적 경계선</h2></div><span class="small" id="frontierStatus">동일 가정 비교</span></div><div class="chart-wrap" id="frontierChart"></div><div class="chart-legend"><span><i class="legend-line"></i> 효율적 경계선</span><span><i class="legend-dot gold"></i> 선택한 포트폴리오</span><span><i class="legend-dot muted"></i> 개별 자산</span></div><div class="chart-foot"><span>변동성은 연간 표준편차 · 수익률은 연간 산술평균</span><span>LONG ONLY · 100%</span></div></article>
-        <article class="panel allocation-panel"><div class="panel-heading"><div><div class="eyebrow">ASSET MIX</div><h2>자산 구성</h2></div><span id="selectedLabel" class="small accent">현재 비중</span></div><div class="donut-wrap" id="allocationDonut"></div><div id="allocationLegend"></div><div class="panel-note">카드를 선택하면 비중과 위험기여도가 함께 바뀝니다.</div></article>
+        <article class="panel frontier-panel"><div class="panel-heading"><div><h2>효율적 경계선</h2></div><span class="small" id="frontierStatus">동일 가정 비교</span></div><div class="chart-wrap" id="frontierChart"></div><div class="sharpe-scale"><strong>Sharpe</strong><span id="sharpeMin"></span><i></i><span id="sharpeMax"></span><span id="mixCount" class="small"></span></div><div class="mix-explorer"><label for="mixSlider">조합 탐색</label><input id="mixSlider" type="range" min="0" max="0" value="0" aria-label="Sharpe 순서로 조합 탐색"><span id="mixMetric" aria-live="polite">—</span></div><div class="chart-legend"><span><i class="legend-line"></i> 효율적 경계선</span><span><i class="legend-dot gold"></i> 선택한 포트폴리오</span><span><i class="legend-dot muted"></i> 개별 자산</span><span><i class="legend-dot taa-one"></i> 비중1</span><span><i class="legend-dot taa-two"></i> 비중2</span></div><div class="chart-foot"><span>변동성은 연간 표준편차 · 수익률은 연간 산술평균</span><span>LONG ONLY · 100%</span></div></article>
+        <article class="panel allocation-panel"><div class="panel-heading"><div><div class="eyebrow">ASSET MIX</div><h2>자산 구성</h2></div><span id="selectedLabel" class="small accent">현재 비중</span></div><div class="donut-wrap" id="allocationDonut"></div><div id="allocationLegend"></div><div class="panel-note"></div></article>
       </div>
+      <article class="panel allocation-controls">
+        <div class="allocation-control-heading"><h2>SAA</h2><div class="preset-controls"><select id="saaPreset" aria-label="SAA 저장 슬롯"><option value="0">SAA 1</option><option value="1">SAA 2</option></select><button class="button secondary" id="saaLoad">불러오기</button><button class="button secondary" id="saaSave">저장</button><button class="button secondary" id="saaReset">제약 해제</button><button class="button primary" id="saaApply">제약 적용</button></div></div>
+        <div class="saa-layout"><div class="table-scroll"><table class="saa-group-table"><thead><tr><th>자산군</th><th>최소 %</th><th>최대 %</th></tr></thead><tbody id="saaGroups"></tbody></table></div><div class="table-scroll"><table class="saa-asset-table"><thead><tr><th>개별 자산</th><th>최소 %</th><th>최대 %</th></tr></thead><tbody id="saaAssets"></tbody></table></div></div>
+        <div id="saaStatus" class="allocation-status" aria-live="polite"></div>
+        <div class="allocation-control-heading taa-heading"><h2>TAA</h2><div class="preset-controls"><select id="taaPreset" aria-label="TAA 저장 슬롯"><option value="0">TAA 1</option><option value="1">TAA 2</option></select><button class="button secondary" id="taaLoad">불러오기</button><button class="button secondary" id="taaSave">저장</button><button class="button primary" id="taaApply">비중·가정 적용</button></div></div>
+        <div class="table-scroll"><table class="taa-table"><thead><tr><th>자산군</th><th>비중1 %</th><th>비중2 %</th><th>기대수익 %</th><th>변동성 %</th><th>차이 %p</th></tr></thead><tbody id="taaAssets"></tbody></table></div>
+        <div class="taa-summary"><button class="taa-portfolio" id="selectTaa1"></button><button class="taa-portfolio" id="selectTaa2"></button><span class="small" id="taaDraftStatus" aria-live="polite"></span></div>
+      </article>
       <div class="detail-grid">
         <article class="panel"><div class="panel-heading"><div><div class="eyebrow">ALLOCATION DETAIL</div><h2>비중과 위험의 균형</h2></div><span class="small">현재 → 선택</span></div><div class="table-scroll"><table class="allocation-table"><thead><tr><th>자산군</th><th>현재 비중</th><th>선택 비중</th><th>변경 %p</th><th>위험기여 비중</th></tr></thead><tbody id="allocationTable"></tbody></table></div><div class="panel-note">위험기여 비중은 공분산을 반영하며 음수가 될 수 있습니다.</div></article>
         <article class="panel target-panel"><div class="eyebrow">YOUR OBJECTIVE</div><h2>목표수익률 탐색</h2><p>목표를 달성하는 조합 중<br>변동성이 가장 낮은 비중을 찾습니다.</p><label for="targetInput" class="small">연간 목표수익률</label><div class="target-field"><input id="targetInput" type="number" step="0.1" value="6" aria-label="연간 목표수익률"><span>%</span></div><button class="button primary full" id="targetApply">목표 적용 <span>→</span></button><p class="small" id="feasibleRange"></p></article>
@@ -61,8 +68,10 @@
       <div id="hedge-modelA" class="hedge-panel" hidden><article class="panel hedge-model-empty"><h2>환헤지모델A</h2><span class="small">모형 미설정</span></article></div>
       <div id="hedge-modelB" class="hedge-panel" hidden><article class="panel hedge-model-empty"><h2>환헤지모델B</h2><span class="small">모형 미설정</span></article></div>
     </section>
+    <section id="fxmodel" class="tab-panel" hidden><div id="fxModelHost"></div></section>
     <footer><span><strong>BJE</strong> PORTFOLIO LAB</span><span>Clarity in every allocation.</span><span id="footerVersion">RESEARCH WORKSPACE / 01</span></footer>
   </main>
 </div><div id="toast" role="status" hidden></div>
-<script type="module" src="app.mjs?v=06e70ce"></script>
+<script type="module" src="app.mjs?v=451372b"></script>
+<script type="module" src="fx-model-ui.mjs?v=451372b"></script>
 </body></html>

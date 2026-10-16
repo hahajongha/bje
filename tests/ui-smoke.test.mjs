@@ -14,6 +14,7 @@ import { covariance, stats, optimize, validateInputs } from '../dist/portfolio.m
 import { demoData } from '../dist/demo-data.mjs';
 import { normalizeFxHedge, renderHedgeMarkup } from '../dist/fx-hedge.mjs';
 import { renderRiskMarkup } from '../dist/risk.mjs';
+import { defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios } from '../dist/allocation.mjs';
 
 const html = await fs.readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
 const source = (await fs.readFile(new URL('../dist/app.mjs', import.meta.url), 'utf8'))
@@ -97,11 +98,13 @@ async function boot(raw) {
   const cache = new Map();
   const run = new AsyncFunction(
     'covariance', 'stats', 'optimize', 'validateInputs', 'demoData', 'normalizeFxHedge', 'renderHedgeMarkup', 'renderRiskMarkup',
+    'defaultPolicy', 'validatePolicy', 'satisfiesPolicy', 'optimizeAllocation', 'samplePortfolios',
     'document', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
     `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen}) };`,
   );
   const app = await run(
     covariance, stats, optimize, validateInputs, demoData, normalizeFxHedge, renderHedgeMarkup, renderRiskMarkup,
+    defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios,
     document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
     async () => ({ ok: true, json: async () => structuredClone(raw) }),
     () => 1, () => {},
@@ -190,6 +193,157 @@ test('FX imports preserve missing tenors, signs, dates and prior data on rejecti
   await app.importData(invalidPortfolio);
   assert.deepEqual(app.snapshot(), prior);
   assert.equal(app.get('hedgeGrid').innerHTML, markup);
+});
+
+test('SAA group and asset limits constrain the frontier and reject infeasible edits transactionally', async () => {
+  const app = await boot(demoData);
+  const initial = app.snapshot();
+  const groupField = (group, bound) => app.document.querySelectorAll('[data-saa-group]')
+    .find(el => el.dataset.saaGroup === group && el.dataset.bound === bound);
+  const assetField = (index, bound) => app.document.querySelectorAll('[data-saa-asset]')
+    .find(el => Number(el.dataset.saaAsset) === index && el.dataset.bound === bound);
+  groupField('bond', 'min').value = '70';
+  groupField('equity', 'max').value = '20';
+  groupField('alternative', 'max').value = '10';
+  assetField(0, 'min').value = '10';
+  app.get('saaApply').click();
+  assert.equal(app.get('alert').hidden, true);
+  const applied = app.snapshot();
+  assert.equal(applied.state.policy.groups.bond.min, .7);
+  assert.equal(applied.state.policy.bounds[0].min, .1);
+  assert.notDeepEqual(applied.results.frontier, initial.results.frontier);
+  assert.ok(applied.results.frontier.length > 1);
+  for (const point of [...applied.results.frontier, applied.results.minVol, applied.results.maxSharpe]) {
+    const bonds = point.weights.reduce((sum, weight, index) => sum + (index < 4 ? weight : 0), 0);
+    assert.ok(bonds >= .7 - 1e-7);
+    assert.ok(point.weights[4] + point.weights[5] <= .2 + 1e-7);
+    assert.ok(point.weights[6] <= .1 + 1e-7);
+    assert.ok(point.weights[0] >= .1 - 1e-7);
+    assert.ok(Math.abs(point.weights.reduce((sum, weight) => sum + weight, 0) - 1) < 1e-8);
+  }
+  assert.equal(applied.results.target, null, 'The original 6% target is outside these limits');
+  const previousChart = app.get('frontierChart').innerHTML;
+  groupField('equity', 'min').value = '40';
+  groupField('equity', 'max').value = '50';
+  app.get('saaApply').click();
+  assert.equal(app.get('alert').hidden, false);
+  assert.deepEqual(app.snapshot(), applied);
+  assert.equal(app.get('frontierChart').innerHTML, previousChart);
+  app.get('saaReset').click();
+  assert.equal(app.get('alert').hidden, true);
+  assert.deepEqual(app.snapshot().state.policy, initial.state.policy);
+});
+
+test('TAA applied weights and chart exploration stay synchronized with allocation and risk', async () => {
+  const app = await boot(demoData);
+  const vectors = { taa1: [30, 20, 10, 10, 10, 10, 10], taa2: [20, 10, 10, 10, 15, 20, 15] };
+  for (const field of app.document.querySelectorAll('[data-taa]')) {
+    field.value = vectors[field.dataset.taa][Number(field.dataset.asset)];
+  }
+  app.get('taaApply').click();
+  assert.equal(app.get('alert').hidden, true);
+  let snapshot = app.snapshot();
+  assert.equal(snapshot.chosen, 'taa1');
+  assert.deepEqual(snapshot.results.taa1.weights, vectors.taa1.map(value => value / 100));
+  assert.deepEqual(snapshot.results.taa2.weights, vectors.taa2.map(value => value / 100));
+  assert.equal(app.get('selectedLabel').textContent, '비중1');
+  app.get('selectTaa2').click();
+  assert.equal(app.snapshot().chosen, 'taa2');
+  assert.equal(app.get('riskPortfolio').value, 'taa2');
+  assert.match(app.get('riskContent').innerHTML, /비중2/);
+  assert.equal(app.get('selectTaa2').getAttribute('aria-pressed'), 'true');
+  const beforeInvalid = app.snapshot();
+  app.document.querySelectorAll('[data-taa]')[0].value = '29';
+  app.get('taaApply').click();
+  assert.equal(app.get('alert').hidden, false);
+  assert.deepEqual(app.snapshot(), beforeInvalid);
+  const previousAllocation = app.get('allocationTable').innerHTML;
+  const points = app.document.querySelectorAll('[data-mix]');
+  assert.ok(points.length >= 100, 'The chart should expose a useful feasible portfolio cloud');
+  assert.ok(new Set(points.map(point => point.getAttribute('fill'))).size > 20, 'Sharpe should vary visibly across the cloud');
+  points[Math.floor(points.length / 2)].click();
+  snapshot = app.snapshot();
+  assert.equal(snapshot.chosen, 'explored');
+  assert.ok(snapshot.results.explored);
+  assert.equal(app.get('riskPortfolio').value, 'explored');
+  assert.equal(app.get('selectedLabel').textContent, '탐색 조합');
+  assert.match(app.get('riskContent').innerHTML, /탐색 조합/);
+  assert.notEqual(app.get('allocationTable').innerHTML, previousAllocation);
+  assert.doesNotMatch(app.get('frontierChart').innerHTML, /NaN|Infinity|undefined/);
+  const chosenWeights = snapshot.results.explored.weights;
+  app.get('mixSlider').value = '0';
+  app.get('mixSlider').oninput();
+  assert.notDeepEqual(app.snapshot().results.explored.weights, chosenWeights);
+});
+
+test('SAA and TAA actions preserve unsaved drafts in the other section', async () => {
+  const app = await boot(demoData);
+  const groupField = () => app.document.querySelectorAll('[data-saa-group]')
+    .find(el => el.dataset.saaGroup === 'equity' && el.dataset.bound === 'max');
+  const weightField = index => app.document.querySelectorAll('[data-taa]')
+    .find(el => el.dataset.taa === 'taa1' && Number(el.dataset.asset) === index);
+  const meanField = () => app.document.querySelectorAll('[data-taa-moment]')
+    .find(el => el.dataset.taaMoment === 'mu' && el.dataset.asset === '0');
+  groupField().value = '30';
+  app.get('saaSave').click();
+  meanField().value = '4.3';
+  app.get('taaSave').click();
+  weightField(0).value = '30';
+  weightField(1).value = '10';
+  meanField().value = '4.8';
+  for (const action of ['saaLoad', 'saaApply']) {
+    app.get(action).click();
+    assert.equal(app.get('alert').hidden, true);
+    assert.equal(weightField(0).value, '30');
+    assert.equal(weightField(1).value, '10');
+    assert.equal(meanField().value, '4.8');
+    assert.equal(app.snapshot().state.taa1[0], .25, 'An SAA action must not apply a TAA draft');
+    assert.equal(app.snapshot().state.assets[0].mu, 3.4);
+  }
+  groupField().value = '45';
+  for (const action of ['taaLoad', 'taaApply']) {
+    app.get(action).click();
+    assert.equal(app.get('alert').hidden, true);
+    assert.equal(groupField().value, '45');
+    assert.equal(app.snapshot().state.policy.groups.equity.max, .3, 'A TAA action must not apply an SAA draft');
+  }
+  assert.equal(app.snapshot().state.assets[0].mu, 4.3);
+});
+
+test('SAA and TAA slots load drafts, including saved moments, before explicit application', async () => {
+  const app = await boot(demoData);
+  const groupField = (group, bound) => app.document.querySelectorAll('[data-saa-group]')
+    .find(el => el.dataset.saaGroup === group && el.dataset.bound === bound);
+  const moment = (index, name) => app.document.querySelectorAll('[data-taa-moment]')
+    .find(el => Number(el.dataset.asset) === index && el.dataset.taaMoment === name);
+  groupField('equity', 'max').value = '30';
+  app.get('saaPreset').value = '1';
+  app.get('saaSave').click();
+  assert.equal(app.get('alert').hidden, true);
+  assert.equal(app.snapshot().state.policy.groups.equity.max, 1, 'Saving a draft does not apply it');
+  groupField('equity', 'max').value = '50';
+  app.get('saaLoad').click();
+  assert.equal(groupField('equity', 'max').value, '30');
+  assert.equal(app.snapshot().state.policy.groups.equity.max, 1);
+  app.get('saaApply').click();
+  assert.equal(app.snapshot().state.policy.groups.equity.max, .3);
+  const originalMean = app.snapshot().state.assets[0].mu;
+  moment(0, 'mu').value = '4.3';
+  moment(0, 'vol').value = '4.1';
+  app.get('taaPreset').value = '1';
+  app.get('taaSave').click();
+  assert.equal(app.get('alert').hidden, true);
+  assert.equal(app.snapshot().state.assets[0].mu, originalMean);
+  moment(0, 'mu').value = '5.5';
+  app.get('taaLoad').click();
+  assert.equal(moment(0, 'mu').value, '4.3');
+  assert.equal(moment(0, 'vol').value, '4.1');
+  assert.equal(app.snapshot().state.assets[0].mu, originalMean);
+  app.get('taaApply').click();
+  assert.equal(app.get('alert').hidden, true);
+  assert.equal(app.snapshot().state.assets[0].mu, 4.3);
+  assert.equal(app.snapshot().state.assets[0].vol, 4.1);
+  assert.equal(app.snapshot().state.policy.groups.equity.max, .3);
 });
 
 for (const [label, raw] of datasets) {

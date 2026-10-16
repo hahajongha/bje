@@ -1,4 +1,4 @@
-const COLORS = ['#bddb9c', '#80b6a5', '#d7bb86', '#87a6c0', '#b5a5c7', '#b68e81'];
+const COLORS = ['#bddb9c', '#80b6a5', '#d7bb86', '#87a6c0', '#b5a5c7', '#b68e81', '#7ec9cf'];
 const RANGES = [[68, 0.994457883], [90, 1.644853627], [95, 1.959963985], [99, 2.575829304]];
 const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',

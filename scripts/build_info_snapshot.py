@@ -24,6 +24,9 @@ SOURCE = 'data_info.xlsx · DailyRate'
 # Exact provider row-8 / row-9 identities; positions are also verified to catch
 # silent template changes before accepting a locally supplied workbook.
 HEADERS = {
+    'B': ('한국_3M', '3월이하(당일)'), 'E': ('한국_1Y', '1년이하(당일)'),
+    'G': ('한국_2Y', '2년이하(당일)'), 'AE': ('UST3M', 'MID_Close'),
+    'AG': ('UST1Y', 'MID_Close'), 'AI': ('UST3Y', 'MID_Close'),
     'Q': ('한국_기준금리', '현재가'), 'I': ('한국_3Y', '3년이하(당일)'),
     'M': ('한국_10Y', '10년이하(당일)'), 'AT': ('FFR', '현재가'),
     'AH': ('UST2Y', 'MID_Close'), 'AL': ('UST10Y', 'MID_Close'),
@@ -58,6 +61,8 @@ FX_SPECS = [('usdkrw', 'USD/KRW', 'V', '원/달러'), ('jpykrw', 'JPY/KRW', 'Y',
             ('dxy', 'DXY', 'W', '지수')]
 PAIR_SPECS = [('USDKRW', ('HW', 'HX', 'HY'), 'V'), ('JPYKRW', ('HZ', 'IA', 'IB'), 'Y'),
               ('EURKRW', ('IC', 'ID', 'IE'), 'AB'), ('AUDKRW', ('IF', 'IG', 'IH'), 'AC')]
+RATE_PAIR_SPECS = [('PR', 'Q', 'AT'), ('3M', 'B', 'AE'), ('1Y', 'E', 'AG'),
+                   ('2Y', 'G', 'AH'), ('3Y', 'I', 'AI')]
 
 
 def signed_number(value):
@@ -189,6 +194,37 @@ def build_hedge(rows):
     return {'unit': 'source_value', 'source': SOURCE, 'pairs': pairs}
 
 
+def build_fx_analytics(rows, as_of):
+    """Keep raw premium units and exact-date complete cases for each comparison.
+
+    No numeric rate-minus-premium gap is produced here: source premium headers
+    do not establish annualization. PR and government-curve maturities are
+    comparison proxies, not maturity-matched deposit rates proving exact CIP.
+    """
+    history_rows = [(day, values) for day, values in rows if day >= date(2015, 1, 1)]
+    rate_pairs = []
+    for tenor, kr_column, us_column in RATE_PAIR_SPECS:
+        required = (kr_column, us_column, 'HW', 'HX', 'HY')
+        history = [
+            {'date': day.isoformat(), 'kr': values[kr_column], 'us': values[us_column],
+             'hedge': mean(values[column] for column in ('HW', 'HX', 'HY'))}
+            for day, values in history_rows if all(values[column] is not None for column in required)
+        ]
+        rate_pairs.append({'tenor': tenor,
+                           'krSource': f'DailyRate!{kr_column} · {HEADERS[kr_column][0]}',
+                           'usSource': f'DailyRate!{us_column} · {HEADERS[us_column][0]}',
+                           'history': history})
+    spots = [
+        {'id': identifier, 'label': label, 'unit': unit,
+         'source': f'DailyRate!{column} · {HEADERS[column][0]} · {HEADERS[column][1]}',
+         'history': [{'date': day.isoformat(), 'value': values[column]}
+                     for day, values in history_rows if values[column] is not None and values[column] > 0]}
+        for identifier, label, column, unit in FX_SPECS
+    ]
+    return {'schemaVersion': 1, 'asOf': as_of.isoformat(), 'source': SOURCE,
+            'hedgeUnit': 'source_value', 'ratePairs': rate_pairs, 'spots': spots}
+
+
 def month_shift(year, month, offset):
     index = year * 12 + month - 1 + offset
     return index // 12, index % 12 + 1
@@ -255,6 +291,13 @@ def build_bond(rows, as_of, months=60):
 def build(info, as_of):
     info = outside_repo(info)
     rows, quality = read_info(info, as_of)
+    return build_from_rows(info, as_of, rows, quality)
+
+
+def build_from_rows(info, as_of, rows, quality):
+    """Share one audited workbook read with the optional combined FX builder."""
+    info = outside_repo(info)
+    quality = dict(quality)
     bond, bond_issue = build_bond(rows, as_of)
     quality['bondMonthlyIssue'] = bond_issue
     if bond['asOf'] is None:
@@ -271,11 +314,14 @@ def build(info, as_of):
                                   'Metric changes are latest minus previous available observation; dates are retained.',
                                   'Hedge premium units are unspecified in the source headers; signed source values are unchanged.',
                                   'Hedge history: complete same-date 3M/6M/12M arithmetic averages since 2015-01-01.',
+                                  'Hedge rate comparisons: same-date complete KR/US rates and HW/HX/HY mean; raw source premium units retained, no inferred CIP gap.',
+                                  'FX monitoring: positive finite observed levels since 2015-01-01; source timestamps retained without filling or source blending.',
                                   'FX volatility: 252 log returns from the last 253 worksheet weekday dates; sample std × sqrt(252) × 100. Missing/nonpositive window quotes invalidate volatility.',
                                   'KIS: 60 monthly returns through the previous calendar month, 61 common index/duration/convexity endpoints within 7 calendar days of month end.',
                                   'KIS annual mean: monthly arithmetic mean × 12 × 100; sample monthly std × sqrt(12) × 100; geometric return uses actual month count; drawdown uses monthly endpoints.',
                                   'KIS YTD uses the final prior-year index within 7 calendar days of Dec 31; 1Y uses the last index at/before anniversary with at most 7 calendar days lag.']},
-              'market': build_market(rows), 'bond': bond, 'fxHedge': hedge}
+              'market': build_market(rows), 'bond': bond, 'fxHedge': hedge,
+              'fxAnalytics': build_fx_analytics(rows, as_of)}
     # Validate JSON finiteness before any write.
     json.dumps(result, ensure_ascii=False, allow_nan=False)
     return result

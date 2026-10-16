@@ -17,6 +17,8 @@ import { renderRiskMarkup } from '../dist/risk.mjs';
 import { defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios } from '../dist/allocation.mjs';
 import { frontierTarget } from '../dist/frontier-target.mjs';
 import { initDataInfoUI } from '../dist/data-info-ui.mjs';
+import { mountHedgeAnalytics } from '../dist/hedge-analytics.mjs';
+import { mountFxWorkspace } from '../dist/fx-workspace.mjs';
 
 const html = await fs.readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
 const source = (await fs.readFile(new URL('../dist/app.mjs', import.meta.url), 'utf8'))
@@ -75,6 +77,12 @@ function createDocument() {
         found.push(element(match[1], attrs));
       }
     }
+    for(const match of markup.matchAll(/<select[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/select>/g)){
+      const select=byId.get(match[1]);
+      select.options=[...match[2].matchAll(/<option value="([^"]+)"([^>]*)>/g)].map(m=>({value:m[1],disabled:m[2].includes('disabled')}));
+      const chosen=[...match[2].matchAll(/<option value="([^"]+)"([^>]*)>/g)].find(m=>m[2].includes('selected'));
+      select.value=chosen?.[1]??select.options[0]?.value??'';
+    }
     return found;
   }
 
@@ -101,13 +109,13 @@ async function boot(raw) {
   const run = new AsyncFunction(
     'covariance', 'stats', 'optimize', 'validateInputs', 'demoData', 'normalizeFxHedge', 'renderHedgeMarkup', 'renderRiskMarkup',
     'defaultPolicy', 'validatePolicy', 'satisfiesPolicy', 'optimizeAllocation', 'samplePortfolios', 'initDataInfoUI', 'frontierTarget',
-    'document', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
-    `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen,frontierComparison}), dataInfoUI };`,
+    'mountHedgeAnalytics', 'mountFxWorkspace', 'document', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
+    `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen,frontierComparison}), dataInfoUI, hedgeAnalytics, fxWorkspace };`,
   );
   const app = await run(
     covariance, stats, optimize, validateInputs, demoData, normalizeFxHedge, renderHedgeMarkup, renderRiskMarkup,
     defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios, initDataInfoUI, frontierTarget,
-    document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
+    mountHedgeAnalytics, mountFxWorkspace, document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
     async () => ({ ok: true, json: async () => structuredClone(raw) }),
     () => 1, () => {},
   );
@@ -128,6 +136,29 @@ async function boot(raw) {
 const datasets = [['demo', demoData]];
 if (process.env.BJE_TEST_DATA) {
   datasets.push(['external snapshot', JSON.parse(await fs.readFile(process.env.BJE_TEST_DATA, 'utf8'))]);
+}
+
+if(process.env.BJE_INFO_DATA){
+  test('combined private snapshot updates Hedge and FX atomically and clears stale models on legacy imports',async()=>{
+    const app=await boot(demoData),raw=JSON.parse(await fs.readFile(process.env.BJE_INFO_DATA,'utf8'));
+    const portfolio=app.snapshot();app.dataInfoUI.apply(raw);
+    assert.deepEqual(app.snapshot(),portfolio);
+    assert.equal(app.hedgeAnalytics.getSnapshot().ratePairs.length,5);
+    assert.equal(app.fxWorkspace.getAnalytics().spots.length,5);
+    assert.equal(app.fxWorkspace.getModelSnapshot().meta.asOf,raw.fxModel.meta.asOf);
+    assert.match(app.get('haCharts').innerHTML,/<svg/);assert.match(app.get('fxModelChart').innerHTML,/<svg/);
+    const previous=app.dataInfoUI.getSnapshot(),model=app.fxWorkspace.getModelSnapshot(),bad=structuredClone(raw);
+    bad.fxModel.forecast[0].lower95=bad.fxModel.forecast[0].upper95+1;
+    assert.throws(()=>app.dataInfoUI.apply(bad));assert.equal(app.dataInfoUI.getSnapshot(),previous);assert.equal(app.fxWorkspace.getModelSnapshot(),model);
+    const wrongHash=structuredClone(raw);wrongHash.fxModel.meta.provenance.primary.sha256='0'.repeat(64);assert.throws(()=>app.dataInfoUI.apply(wrongHash));
+    const missingDate=structuredClone(raw),usd=missingDate.fxAnalytics.spots.find(s=>s.id==='usdkrw');usd.history=usd.history.filter(r=>r.date!==raw.fxModel.history[0].date);assert.throws(()=>app.dataInfoUI.apply(missingDate));
+    await app.importData({...demoData,fxHedge:{unit:'annual_percent',source:'Synthetic replacement',pairs:[]}});
+    assert.equal(app.hedgeAnalytics.getSnapshot(),null);assert.equal(app.fxWorkspace.getModelSnapshot(),model);
+    app.dataInfoUI.apply(raw);
+    const legacy=structuredClone(raw);delete legacy.fxAnalytics;delete legacy.fxModel;
+    app.dataInfoUI.apply(legacy);assert.equal(app.hedgeAnalytics.getSnapshot(),null);assert.equal(app.fxWorkspace.getAnalytics(),null);assert.equal(app.fxWorkspace.getModelSnapshot(),null);
+    assert.equal(app.get('fxModelCSV').disabled,true);assert.deepEqual(app.snapshot().state,portfolio.state);assert.deepEqual(app.snapshot().results,portfolio.results);
+  });
 }
 
 test('risk selection stays synchronized with portfolio cards and model navigation is isolated', async () => {

@@ -1,7 +1,7 @@
 /**
  * Node DOM-stub integration checks, not browser or visual QA.
- * The real app's event handlers, calculations, markup and CSV Blob run here.
- * Browser layout, native number-input behavior, downloads and persistence are
+ * The real app's event handlers, calculations and markup run here.
+ * Browser layout, native number-input behavior and persistence are
  * not validated. No private data values are embedded in this file.
  *
  * node --test tests/ui-smoke.test.mjs
@@ -24,7 +24,6 @@ function createDocument() {
   const byId = new Map();
   const roots = [];
   const groups = new Map();
-  const downloads = [];
 
   function element(tag, attributes = {}) {
     const classes = new Set((attributes.class || '').split(/\s+/).filter(Boolean));
@@ -50,7 +49,6 @@ function createDocument() {
       getAttribute: name => attributes[name] ?? null,
       setAttribute: (name, value) => { attributes[name] = String(value); },
       click() {
-        if (tag === 'a' && this.download) downloads.push({ download: this.download, href: this.href });
         return this.onclick?.({ target: this, preventDefault() {} });
       },
       get value() { return value; },
@@ -88,29 +86,25 @@ function createDocument() {
     return key in el.dataset && (match[2] === undefined || el.dataset[key] === match[2]);
   });
   return {
-    downloads,
     getElementById(id) { return byId.get(id) || null; },
     querySelectorAll,
     querySelector: selector => querySelectorAll(selector)[0] || null,
-    createElement: tag => element(tag),
   };
 }
 
 async function boot(raw) {
   const document = createDocument();
   const cache = new Map();
-  const blobs = [];
   const run = new AsyncFunction(
     'covariance', 'stats', 'optimize', 'validateInputs', 'demoData', 'normalizeFxHedge', 'renderHedgeMarkup', 'renderRiskMarkup',
-    'document', 'localStorage', 'fetch', 'URL', 'Blob', 'setTimeout', 'clearTimeout',
+    'document', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
     `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen}) };`,
   );
   const app = await run(
     covariance, stats, optimize, validateInputs, demoData, normalizeFxHedge, renderHedgeMarkup, renderRiskMarkup,
     document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
     async () => ({ ok: true, json: async () => structuredClone(raw) }),
-    { createObjectURL: blob => { blobs.push(blob); return `blob:test-${blobs.length}`; }, revokeObjectURL() {} },
-    Blob, () => 1, () => {},
+    () => 1, () => {},
   );
   const get = id => {
     const el = document.getElementById(id);
@@ -123,7 +117,7 @@ async function boot(raw) {
     await get('importFile').onchange({ target });
     assert.equal(target.value, '');
   };
-  return { ...app, document, get, blobs, cache, importData };
+  return { ...app, document, get, cache, importData };
 }
 
 const datasets = [['demo', demoData]];
@@ -133,7 +127,9 @@ if (process.env.BJE_TEST_DATA) {
 
 test('risk selection stays synchronized with portfolio cards and model navigation is isolated', async () => {
   const app = await boot(demoData);
-  const nav = name => app.document.querySelectorAll('[data-tab]').find(button => button.dataset.tab === name);
+  const buttons = app.document.querySelectorAll('[data-tab]');
+  assert.deepEqual(buttons.map(button => button.dataset.tab), ['risk', 'overview', 'assumptions', 'hedge']);
+  const nav = name => buttons.find(button => button.dataset.tab === name);
   nav('risk').click();
   assert.equal(app.get('risk').hidden, false);
   assert.equal(app.get('overview').hidden, true);
@@ -145,7 +141,7 @@ test('risk selection stays synchronized with portfolio cards and model navigatio
   assert.equal(app.document.querySelectorAll('[data-portfolio]').find(b => b.dataset.portfolio === 'minVol').getAttribute('aria-pressed'), 'true');
   nav('hedge').click();
   assert.equal(app.get('hedge').hidden, false);
-  assert.equal(app.document.querySelector('.data-strip').hidden, true);
+  assert.equal(app.document.querySelector('.data-strip'), null);
   for (const tab of ['modelA', 'modelB', 'monitor']) {
     const button = app.document.querySelectorAll('[data-hedge-tab]').find(b => b.dataset.hedgeTab === tab);
     button.click();
@@ -153,7 +149,10 @@ test('risk selection stays synchronized with portfolio cards and model navigatio
     for (const panel of app.document.querySelectorAll('.hedge-panel')) assert.equal(panel.hidden, panel.id !== `hedge-${tab}`);
   }
   nav('overview').click();
-  assert.equal(app.document.querySelector('.data-strip').hidden, false);
+  assert.equal(app.document.querySelector('.heading-actions'), null);
+  nav('assumptions').click();
+  assert.equal(app.get('assumptions').hidden, false);
+  assert.equal(app.get('pageTitle').innerHTML, 'Capital Market Assumption');
   assert.equal(app.get('riskPortfolio').value, 'minVol');
 });
 
@@ -198,7 +197,6 @@ for (const [label, raw] of datasets) {
     const app = await boot(raw);
     assert.equal(app.get('alert').hidden, true, 'Data should initialize without demo fallback');
     assert.deepEqual(app.snapshot().data.assets.map(a => a.id), raw.assets.map(a => a.id));
-    assert.equal(app.get('sourceLabel').textContent.includes('예시 가정 데이터'), !!raw.meta?.demo);
     for (const id of ['portfolioCards', 'frontierChart', 'allocationTable', 'allocationDonut']) {
       assert.ok(app.get(id).innerHTML.length > 0);
       assert.doesNotMatch(app.get(id).innerHTML, /NaN|Infinity|undefined/);
@@ -209,7 +207,7 @@ for (const [label, raw] of datasets) {
       assert.equal(app.snapshot().data.monthly.dates.length, raw.monthly.base100.length);
       const start = raw.meta?.sampleStart || raw.meta?.periodStart;
       const end = raw.meta?.sampleEnd || raw.meta?.periodEnd;
-      if (start && end) assert.equal(app.get('dateLabel').textContent, `${start} — ${end}`);
+      if (start && end) assert.deepEqual([app.snapshot().data.meta.sampleStart, app.snapshot().data.meta.sampleEnd], [start, end]);
     }
   });
 
@@ -268,23 +266,4 @@ for (const [label, raw] of datasets) {
     assert.deepEqual(app.snapshot(), previous);
   });
 
-  test(`${label}: CSV export creates a complete data Blob with safe asset text`, async () => {
-    const app = await boot(raw);
-    const escaped = structuredClone(raw);
-    escaped.assets[0].name = '=unsafe,"quoted"';
-    await app.importData(escaped);
-    assert.equal(app.get('alert').hidden, true);
-    app.get('exportButton').click();
-    assert.equal(app.blobs.length, 1);
-    assert.equal(app.document.downloads.length, 1);
-    assert.equal(app.document.downloads[0].download, 'BJE-portfolio.csv');
-    const csv = await app.blobs[0].text();
-    const result = app.snapshot();
-    const count = ['current', 'minVol', 'target', 'maxSharpe'].filter(key => result.results[key]).length;
-    assert.equal(csv.split('\r\n').length, 1 + count * raw.assets.length);
-    assert.match(csv, /"portfolio","asset","weight_pct"/);
-    assert.ok(csv.includes('"\'=unsafe,""quoted"""'));
-    assert.doesNotMatch(csv, /NaN|Infinity|undefined/);
-    if (result.data.meta.sampleEnd) assert.ok(csv.includes(`"${result.data.meta.sampleEnd}"`));
-  });
 }

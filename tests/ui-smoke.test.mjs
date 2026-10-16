@@ -131,7 +131,7 @@ if (process.env.BJE_TEST_DATA) {
 test('risk selection stays synchronized with portfolio cards and model navigation is isolated', async () => {
   const app = await boot(demoData);
   const buttons = app.document.querySelectorAll('[data-tab]');
-  assert.deepEqual(buttons.map(button => button.dataset.tab), ['risk', 'overview', 'assumptions', 'hedge']);
+  assert.deepEqual(buttons.map(button => button.dataset.tab), ['risk', 'overview', 'assumptions', 'hedge', 'fxmodel']);
   const nav = name => buttons.find(button => button.dataset.tab === name);
   nav('risk').click();
   assert.equal(app.get('risk').hidden, false);
@@ -151,7 +151,13 @@ test('risk selection stays synchronized with portfolio cards and model navigatio
     assert.equal(button.getAttribute('aria-pressed'), 'true');
     for (const panel of app.document.querySelectorAll('.hedge-panel')) assert.equal(panel.hidden, panel.id !== `hedge-${tab}`);
   }
+  nav('fxmodel').click();
+  assert.equal(app.get('fxmodel').hidden, false);
+  assert.equal(app.get('hedge').hidden, true);
+  assert.equal(app.get('overview').hidden, true);
+  assert.equal(app.get('pageTitle').innerHTML, '환율모형');
   nav('overview').click();
+  assert.equal(app.get('fxmodel').hidden, true);
   assert.equal(app.document.querySelector('.heading-actions'), null);
   nav('assumptions').click();
   assert.equal(app.get('assumptions').hidden, false);

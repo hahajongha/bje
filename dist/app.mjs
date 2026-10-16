@@ -243,10 +243,10 @@ function renderHistory(){
   $('historyLegend').innerHTML=data.assets.map((a,i)=>`<span><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(a.name)} <strong>${fmt((v.at(-1)[i]/100-1)*100,1)}%</strong></span>`).join('');
 }
 function setTab(tab){
-  if(!['overview','assumptions','risk','hedge'].includes(tab))tab='overview';
+  if(!['overview','assumptions','risk','hedge','fxmodel'].includes(tab))tab='overview';
   document.querySelectorAll('.tab-panel').forEach(el=>el.hidden=el.id!==tab);
   document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
-  const titles={overview:'포트폴리오 대시보드<span>.</span>',assumptions:'Capital Market Assumption',risk:'리스크',hedge:'환헤지'};
+  const titles={overview:'포트폴리오 대시보드<span>.</span>',assumptions:'Capital Market Assumption',risk:'리스크',hedge:'환헤지',fxmodel:'환율모형'};
   $('pageTitle').innerHTML=titles[tab];
   if(tab==='overview'){renderFrontier();renderHistory();}
 }

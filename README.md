@@ -77,6 +77,8 @@ BJE_TEST_DATA=/private/portfolio.json node --test tests/ui-smoke.test.mjs
 
 ## 화면 문구 원칙
 
+후속 작업은 `AGENTS.md`의 화면 문구 원칙을 따릅니다. 모든 탭의 공통 푸터 행과 사이드바 `PORTFOLIO LAB` 부제를 제거했으며, 자산별 누적 총수익의 과거 성과 안내 및 수익률 범위 설명 문장은 표시하지 않습니다. 삭제한 설명이나 빈 행을 다시 추가하지 않습니다.
+
 메뉴·제목·수치 라벨은 간결하게 유지하며 새로운 문장형 설명 주석은 추가하지 않습니다. 메뉴 순서는 `PORT → RISK → CMA → HEDGE → FX`이며 작은 메뉴 아이콘과 숫자 번호는 표시하지 않습니다. 투자 가정 메뉴는 `CMA`, 해당 화면 제목은 `Capital Market Assumption`을 사용합니다. 공통 상단 문구·내보내기/편집 버튼·데이터 안내 박스와 사이드바 하단 Workspace 표시는 제거했습니다.
 
 ## 리스크와 환헤지

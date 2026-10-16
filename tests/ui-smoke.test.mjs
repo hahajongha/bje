@@ -15,6 +15,7 @@ import { demoData } from '../dist/demo-data.mjs';
 import { normalizeFxHedge, renderHedgeMarkup } from '../dist/fx-hedge.mjs';
 import { renderRiskMarkup } from '../dist/risk.mjs';
 import { defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios } from '../dist/allocation.mjs';
+import { frontierTarget } from '../dist/frontier-target.mjs';
 import { initDataInfoUI } from '../dist/data-info-ui.mjs';
 
 const html = await fs.readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
@@ -99,13 +100,13 @@ async function boot(raw) {
   const cache = new Map();
   const run = new AsyncFunction(
     'covariance', 'stats', 'optimize', 'validateInputs', 'demoData', 'normalizeFxHedge', 'renderHedgeMarkup', 'renderRiskMarkup',
-    'defaultPolicy', 'validatePolicy', 'satisfiesPolicy', 'optimizeAllocation', 'samplePortfolios', 'initDataInfoUI',
+    'defaultPolicy', 'validatePolicy', 'satisfiesPolicy', 'optimizeAllocation', 'samplePortfolios', 'initDataInfoUI', 'frontierTarget',
     'document', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
-    `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen}), dataInfoUI };`,
+    `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen,frontierComparison}), dataInfoUI };`,
   );
   const app = await run(
     covariance, stats, optimize, validateInputs, demoData, normalizeFxHedge, renderHedgeMarkup, renderRiskMarkup,
-    defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios, initDataInfoUI,
+    defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios, initDataInfoUI, frontierTarget,
     document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
     async () => ({ ok: true, json: async () => structuredClone(raw) }),
     () => 1, () => {},
@@ -132,7 +133,7 @@ if (process.env.BJE_TEST_DATA) {
 test('risk selection stays synchronized with portfolio cards and model navigation is isolated', async () => {
   const app = await boot(demoData);
   const buttons = app.document.querySelectorAll('[data-tab]');
-  assert.deepEqual(buttons.map(button => button.dataset.tab), ['risk', 'overview', 'assumptions', 'hedge', 'fxmodel']);
+  assert.deepEqual(buttons.map(button => button.dataset.tab), ['overview', 'risk', 'assumptions', 'hedge', 'fxmodel']);
   const nav = name => buttons.find(button => button.dataset.tab === name);
   nav('risk').click();
   assert.equal(app.get('risk').hidden, false);
@@ -451,4 +452,68 @@ test('market import changes market and hedge views without touching applied port
   assert.equal(app.get('hedgeGrid').innerHTML,previousHedge);
   assert.match(app.get('hedgeHistograms').innerHTML,/2026-10-14 ~ 2026-10-15/);
   assert.equal(app.dataInfoUI.getSnapshot().meta.source,'synthetic DailyRate');
+});
+
+test('asset and mix selection show efficient target deltas and selected annual moments', async () => {
+  const app = await boot(demoData);
+  assert.doesNotMatch(html.match(/<nav aria-label="주 메뉴">([\s\S]*?)<\/nav>/)[1], /<span|◈|◫|☷|⇄|⌁/);
+  const baseline = app.snapshot().state;
+  const assetButtons = app.document.querySelectorAll('[data-select-asset]');
+  assert.equal(assetButtons.length, demoData.assets.length);
+  assetButtons[0].click();
+  let snap = app.snapshot();
+  assert.equal(snap.chosen, 'asset');
+  assert.deepEqual(snap.results.asset.weights, [1,0,0,0,0,0,0]);
+  assert.equal(app.get('selectedLabel').textContent, demoData.assets[0].name);
+  assert.equal(app.get('riskPortfolio').value, 'asset');
+  assert.match(app.get('allocationLegend').innerHTML, /선택 %.*목표 %.*증감 %p/);
+  assert.match(app.get('selectedMetrics').innerHTML, /기대수익.*3\.40.*변동성.*3\.80/);
+  assert.ok(snap.frontierComparison.target.mu >= snap.results.asset.mu - 1e-7);
+  assert.ok(snap.frontierComparison.target.vol <= snap.results.asset.vol + 1e-7);
+  assert.match(app.get('frontierChart').innerHTML, /frontier-move/);
+  const exactAsset = app.document.querySelectorAll('[data-chart-asset]').find(el => el.dataset.chartAsset === '4');
+  exactAsset.onkeydown({key:'Enter', preventDefault(){}});
+  snap = app.snapshot();
+  assert.equal(snap.results.asset.weights[4], 1);
+  app.get('frontierMode').value = 'same-return';
+  app.get('frontierMode').onchange();
+  snap = app.snapshot();
+  assert.equal(snap.frontierComparison.mode, 'same-return');
+  assert.ok(Math.abs(snap.frontierComparison.target.mu - snap.results.asset.mu) < 1e-7);
+  assert.ok(snap.frontierComparison.target.vol < snap.results.asset.vol);
+  const mixes = app.document.querySelectorAll('[data-mix]');
+  mixes[Math.floor(mixes.length / 2)].click();
+  snap = app.snapshot();
+  assert.equal(snap.chosen, 'explored');
+  assert.ok(Math.abs(snap.frontierComparison.deltas.reduce((sum,value)=>sum+value,0)) < 1e-8);
+  assert.deepEqual(snap.state, baseline, 'Exploration must not change saved portfolio weights or assumptions');
+});
+
+test('SAA infeasibility clears stale frontier target while keeping selected portfolio metrics', async () => {
+  const app = await boot(demoData);
+  app.document.querySelectorAll('[data-select-asset]').find(el => el.dataset.selectAsset === '5').click();
+  app.get('frontierMode').value = 'same-return';
+  app.get('frontierMode').onchange();
+  assert.ok(app.snapshot().frontierComparison.target);
+  const equityMax=app.document.querySelectorAll('[data-saa-group]').find(el=>el.dataset.saaGroup==='equity'&&el.dataset.bound==='max');
+  equityMax.value='0';app.get('saaApply').click();
+  const snap=app.snapshot();
+  assert.equal(snap.chosen,'asset');
+  assert.equal(snap.frontierComparison.target,null);
+  assert.match(app.get('allocationLegend').innerHTML,/—/);
+  assert.doesNotMatch(app.get('frontierChart').innerHTML,/frontier-move/);
+  assert.match(app.get('selectedMetrics').innerHTML,/기대수익.*8\.00.*변동성.*18\.00/);
+  assert.equal(app.get('frontierCondition').classList.contains('warn'),true);
+});
+
+test('imported asset names remain plain text in selection markup', async () => {
+  const raw=structuredClone(demoData);
+  raw.assets[0].name='<img src=x onerror=alert(1)>"asset';
+  const app=await boot(raw);
+  app.document.querySelectorAll('[data-select-asset]')[0].click();
+  for(const id of ['riskPortfolio','frontierChart','selectedMetrics','allocationLegend','assetSelectors']){
+    assert.doesNotMatch(app.get(id).innerHTML,/<img src/);
+    assert.match(app.get(id).innerHTML,/&lt;img/);
+  }
+  assert.equal(app.get('selectedLabel').textContent,raw.assets[0].name);
 });

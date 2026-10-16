@@ -97,3 +97,27 @@ main{padding:24px 16px 0}.portfolio-card{padding:14px 12px}.card-top{font-size:1
 @media(max-width:1200px){.info-metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.info-metric strong{font-size:27px}.info-histogram{padding:18px 14px}}
 @media(max-width:760px){.info-import{align-items:flex-start;margin-left:0;width:100%;gap:7px}.info-import .small{text-align:left;max-width:100%}.info-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.info-metric{padding:15px 13px}.info-metric strong{font-size:26px}.info-metric strong small{font-size:12px;margin-left:4px}.info-bond-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.info-bond-metric{padding:13px 12px}.info-bond-metric strong{font-size:24px}.info-bond-metric>span{font-size:12px}.info-histogram-grid{grid-template-columns:1fr}.info-distribution-heading{gap:16px}.info-chart-meta{font-size:12px}.info-histogram svg{min-width:350px}}
 @media(max-width:440px){.info-bond-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.info-metric strong{font-size:23px}.info-metric>span{font-size:14px}.info-meta,.info-change small{font-size:11px}.info-histogram svg{min-width:330px}.info-import .small{font-size:12px}}
+
+/* Selected allocation and efficient-frontier comparison */
+.asset-selectors{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 18px}
+.asset-selectors button{padding:6px 9px;border:1px solid var(--line);border-bottom:2px solid var(--asset-color);border-radius:4px;background:#121c18;color:var(--muted);font-size:13px}
+.asset-selectors button[aria-pressed=true]{color:var(--text);background:#2a3a30;border-color:var(--asset-color)}
+.frontier-panel [data-chart-asset]{cursor:pointer}.frontier-panel [data-chart-asset]:focus-visible{outline:none;filter:drop-shadow(0 0 4px #fff)}
+.legend-dot.frontier-goal{width:9px;height:9px;border:2px solid #f1eee2;background:transparent}
+.frontier-mode{display:flex;flex-direction:column;gap:7px;margin:8px 0 9px;font-size:13px;color:var(--muted)}
+.frontier-mode select{width:100%;min-width:0;padding:8px 24px 8px 10px;font-size:13px}
+.frontier-condition{color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:10px;overflow-wrap:anywhere}.frontier-condition:empty{display:none}.frontier-condition.warn{color:var(--red)}
+.allocation-comparison{table-layout:fixed;white-space:normal;font-variant-numeric:tabular-nums}
+.allocation-comparison th,.allocation-comparison td{padding:8px 3px;text-align:left;font-size:13px;white-space:nowrap}
+.allocation-comparison th{font-size:12px}.allocation-comparison th:first-child,.allocation-comparison td:first-child{width:30%;padding-left:0;white-space:normal;overflow-wrap:anywhere}
+.selection-metrics{border-top:1px solid var(--line);padding-top:16px;margin-top:16px}
+.selection-metrics-title{font-size:13px;color:var(--muted);margin-bottom:10px;overflow-wrap:anywhere}
+.selected-metric-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.selected-metric-grid>div>span{display:block;font-size:13px;color:var(--muted)}
+.selected-metric-grid strong{display:block;color:var(--gold);font-size:28px;line-height:1.6;font-weight:500}
+.selected-metric-grid small{font-size:15px;margin-left:4px}
+.frontier-target-metrics{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted);margin-top:12px}
+.frontier-target-metrics>span:first-child{width:100%;color:var(--green)}.frontier-target-metrics strong{color:var(--text);font-weight:500}
+@media(min-width:981px){.analysis-grid{grid-template-columns:minmax(0,1.85fr) minmax(340px,1fr)}}
+@media(max-width:980px){.allocation-panel{display:block}.allocation-comparison th,.allocation-comparison td{font-size:14px;padding:10px 6px}.donut-wrap svg{width:140px;height:140px}}
+@media(max-width:420px){.allocation-comparison th,.allocation-comparison td{font-size:12px;padding:8px 2px}.allocation-comparison th:first-child,.allocation-comparison td:first-child{width:30%}}

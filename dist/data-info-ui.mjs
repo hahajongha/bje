@@ -1,4 +1,6 @@
 import { normalizeFxHedge } from './fx-hedge.mjs';
+import { normalizeHedgeFx } from './hedge-lab.mjs';
+import { normalizeFxModel } from './fx-model-ui.mjs';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (value, digits=2) => Number.isFinite(value) ? value.toLocaleString('ko-KR', {minimumFractionDigits:digits, maximumFractionDigits:digits}) : '—';
@@ -85,7 +87,11 @@ export function normalizeDataInfo(raw) {
     checkDate(pair.asOf,'프리미엄 관측일',meta.latestObservation);
     checkDate(pair.volAsOf,'환 변동성 관측일',meta.latestObservation);
   }
-  return {kind:'bje_data_info',schemaVersion:1,meta,market,bond,fxHedge};
+  const hedgeFx=raw.hedgeFx==null?null:normalizeHedgeFx(raw.hedgeFx);
+  const fxModel=raw.fxModel==null?null:normalizeFxModel(raw.fxModel);
+  if(hedgeFx && hedgeFx.asOf>meta.latestObservation)throw Error('환헤지·FX 관측일이 시장자료보다 늦습니다.');
+  if(fxModel && fxModel.meta.asOf>meta.latestObservation)throw Error('환율모형 관측일이 시장자료보다 늦습니다.');
+  return {kind:'bje_data_info',schemaVersion:1,meta,market,bond,fxHedge,hedgeFx,fxModel};
 }
 
 export function renderMarketMarkup(snapshot) {
@@ -167,7 +173,7 @@ export function renderHistogramMarkup(snapshot, years='5') {
   }).join('');
 }
 
-export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{}}={}) {
+export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{},onAnalytics=()=>{}}={}) {
   const $=id=>doc.getElementById(id);
   let snapshot=null,hedge=normalizeFxHedge(null),years='5';
   function renderHedge(next) {
@@ -187,6 +193,7 @@ export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{}}
     $('bondReference').innerHTML=bondMarkup;
     onHedge(next.fxHedge);
     renderHedge(next.fxHedge);
+    onAnalytics(next);
     $('dataInfoError').hidden=true;
     return next;
   }

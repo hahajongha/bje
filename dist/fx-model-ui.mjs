@@ -123,7 +123,7 @@ export function renderFxChart(snapshot, months=12, years=3, width=1040, coverage
   let out=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="fxChartTitle fxChartDesc"><title id="fxChartTitle">USDKRW 과거 환율과 3국면 Markov 전망</title><desc id="fxChartDesc">기준일 ${esc(last.date)}. 파란색은 과거 관측, 붉은 점선은 조건부 평균 전망. 음영은 ${[68,90,95].filter(b=>b<=coverage).join(', ')}% 모형 예측구간.</desc>`;
   for(let j=0;j<=5;j++){const v=min+(max-min)*j/5;out+=`<line x1="${pad.l}" x2="${W-pad.r}" y1="${y(v)}" y2="${y(v)}" stroke="#2c3632"/><text x="${pad.l-10}" y="${y(v)+4}" text-anchor="end" font-size="13">${fmt(v)}</text>`;}
   const count=W<650?4:7;
-  for(let j=0;j<=count;j++){const t=t0+(t1-t0)*j/count,d=new Date(t).toISOString().slice(0,7).replace('-','.');out+=`<line x1="${x(t)}" x2="${x(t)}" y1="${pad.t}" y2="${H-pad.b}" stroke="#27312d"/><text x="${x(t)}" y="${H-18}" text-anchor="middle" font-size="13">${d}</text>`;}
+  for(let j=0;j<=count;j++){const t=t0+(t1-t0)*j/count,d=new Date(t).toISOString().slice(0,7).replace('-','.');out+=`<line x1="${x(t)}" x2="${x(t)}" y1="${pad.t}" y2="${H-pad.b}" stroke="#27312d"/><text x="${x(t)}" y="${H-18}" text-anchor="${j===0?'start':j===count?'end':'middle'}" font-size="13">${d}</text>`;}
   for(const [band,opacity] of [[95,.10],[90,.15],[68,.23]]){
     if(band>coverage)continue;
     const upper=linePath(f,`upper${band}`,x,y),lower=[...f].reverse().map(row=>`L${x(stamp(row.date)).toFixed(2)},${y(row[`lower${band}`]).toFixed(2)}`).join(' ');
@@ -132,11 +132,15 @@ export function renderFxChart(snapshot, months=12, years=3, width=1040, coverage
   out+=`<line x1="${x(stamp(last.date))}" x2="${W-pad.r}" y1="${y(last.spot)}" y2="${y(last.spot)}" stroke="#5fa9df" stroke-opacity=".5" stroke-dasharray="3 5"/>`;
   out+=`<path d="${linePath(history,'spot',x,y)}" fill="none" stroke="#55a9ed" stroke-width="1.9" stroke-linejoin="round"/><path d="${linePath(f,'mean',x,y)}" fill="none" stroke="#efaaa3" stroke-width="2" stroke-dasharray="5 5"/>`;
   out+=`<line x1="${x(stamp(last.date))}" x2="${x(stamp(last.date))}" y1="${pad.t-6}" y2="${H-pad.b}" stroke="#b0b5ac" stroke-dasharray="4 5"/><text x="${x(stamp(last.date))+7}" y="${pad.t-13}" text-anchor="${x(stamp(last.date))>W-100?'end':'start'}" font-size="12">전망 →</text>`;
-  const quarters=quarterRows(forecast),available=W-pad.r-x(stamp(last.date)),stride=Math.max(1,Math.ceil(quarters.length/Math.max(1,Math.floor(available/70))));
+  const quarters=quarterRows(forecast),labels=new Set();let nextLabelX=Infinity,nextLabelLeft=Infinity;
+  for(let i=quarters.length-1;i>=0;i--){
+    const [key,row]=quarters[i],px=x(stamp(row.date)),nearEnd=px>W-65,labelWidth=Math.max(quarterDisplay(key,row).slice(2).length,fmt(row.mean).length)*7.3,left=nearEnd?px-5-labelWidth:px-labelWidth/2,right=nearEnd?px-5:px+labelWidth/2;
+    if(nextLabelX-px>=76&&right<=nextLabelLeft-10){labels.add(i);nextLabelX=px;nextLabelLeft=left;}
+  }
   quarters.forEach(([label,row],i)=>{
-    if((quarters.length-1-i)%stride)return;
     const px=x(stamp(row.date)),py=y(row.mean),nearEnd=px>W-65,align=nearEnd?'end':'middle',dx=nearEnd?-5:0;
-    out+=`<circle cx="${px}" cy="${py}" r="3.2" fill="#f1b7b0"/><text x="${px+dx}" y="${py-24}" text-anchor="${align}" font-size="12" style="fill:#edaaa2">${quarterDisplay(label,row).slice(2)}</text><text x="${px+dx}" y="${py-9}" text-anchor="${align}" font-size="12" style="fill:#edaaa2">${fmt(row.mean)}</text>`;
+    out+=`<circle cx="${px}" cy="${py}" r="3.2" fill="#f1b7b0"/>`;
+    if(labels.has(i))out+=`<text x="${px+dx}" y="${py-24}" text-anchor="${align}" font-size="12" style="fill:#edaaa2">${quarterDisplay(label,row).slice(2)}</text><text x="${px+dx}" y="${py-9}" text-anchor="${align}" font-size="12" style="fill:#edaaa2">${fmt(row.mean)}</text>`;
   });
   out+=`<circle cx="${x(stamp(last.date))}" cy="${y(last.spot)}" r="3" fill="#dfe9f0"/></svg>`;
   return out;
@@ -200,6 +204,16 @@ export function mountFxModel(documentRoot=document) {
     if(months*21>next.forecast.length){const available=options.filter(option=>!option.disabled);months=available.length?Number(available.at(-1).value):next.forecast.length/21;}
     $('fxModelHorizon').value=String(months);$('fxModelError').hidden=true;render();return snapshot;
   }
+  function clear(){
+    snapshot=null;showTable=false;
+    $('fxModelSource').textContent='데이터 미연결';$('fxModelMetrics').innerHTML='';
+    $('fxModelError').hidden=true;$('fxModelWarning').hidden=true;
+    $('fxModelChart').innerHTML='<div class="fx-model-empty"><span>USDKRW</span><strong>전망 데이터 미연결</strong></div>';
+    $('fxModelTable').innerHTML='';$('fxModelTable').hidden=true;
+    $('fxModelTableButton').disabled=true;$('fxModelTableButton').setAttribute('aria-expanded','false');$('fxModelCSV').disabled=true;
+    $('fxModelDetails').hidden=true;$('fxModelRegimes').innerHTML='';$('fxModelTransition').innerHTML='';$('fxModelMethod').innerHTML='';
+    $('fxModelPeriod').textContent='원/달러 · 조건부 예측구간';$('fxModelSample').textContent='';
+  }
   $('fxModelImport').onclick=()=>$('fxModelFile').click();
   $('fxModelFile').onchange=async event=>{
     const file=event.target.files?.[0];if(!file)return;
@@ -213,6 +227,5 @@ export function mountFxModel(documentRoot=document) {
   $('fxModelTableButton').onclick=()=>{showTable=!showTable;$('fxModelTable').hidden=!showTable;$('fxModelTableButton').setAttribute('aria-expanded',String(showTable));};
   $('fxModelCSV').onclick=()=>{if(!snapshot)return;const url=URL.createObjectURL(new Blob([fxModelCSV(snapshot,months,years)],{type:'text/csv;charset=utf-8;'}));const a=documentRoot.createElement('a');a.href=url;a.download=`USDKRW_Markov3_${snapshot.meta.asOf}_${months}M.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
   if(typeof ResizeObserver!=='undefined'){let previous=0;new ResizeObserver(entries=>{const width=entries[0].contentRect.width;if(width>0&&width!==previous){previous=width;render();}}).observe($('fxModelChart'));}
-  return {install,getSnapshot:()=>snapshot};
+  return {install,clear,getSnapshot:()=>snapshot};
 }
-if(typeof document!=='undefined')mountFxModel(document);

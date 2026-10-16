@@ -44,7 +44,6 @@ function recalculate(){
   if(!results[chosen])chosen='current';
   $('targetInput').value=String(state.target);$('riskFreeInput').value=String(state.rf);
   const isDemo=!!data.meta.demo;
-  $('modeBadge').textContent=isDemo?'DEMO · 예시 데이터':'DATA SNAPSHOT';
   $('sourceLabel').textContent=isDemo?'예시 가정 데이터':data.meta.mode==='private_actual'?'Google Drive · data_git':'사용자 데이터 스냅샷';
   $('dateLabel').textContent=data.meta.sampleStart&&data.meta.sampleEnd?`${data.meta.sampleStart} — ${data.meta.sampleEnd}`:'실제 시장 데이터 미적용';
   $('sampleLabel').textContent=data.meta.observations?`${data.meta.observations}개 월간 수익률 · KRW`:'KRW 기준 · 가상 입력';
@@ -121,7 +120,20 @@ function renderSources(){
   const sourceText=a=>typeof a.source==='string'?a.source:a.source?`${a.source.file} / ${a.source.sheet} / ${a.source.column} · ${a.source.conversion}`:'가상 입력';
   $('sourceNotes').innerHTML=`<div class="source-meta"><strong>${meta.demo?'데모 · 가상 입력':meta.mode==='private_actual'?'Google Drive / data_git 스냅샷':'사용자 데이터 스냅샷'}</strong>${meta.demo?'원본 데이터는 공개 코드에 포함되지 않습니다.':`분석기간 ${esc(meta.sampleStart)} ~ ${esc(meta.sampleEnd)}<br>월간 수익률 ${esc(meta.observations)}개 · 기준통화 KRW`}</div>${meta.latestCommonObservation?`<div class="source-meta"><strong>최신 공통 일별 관측</strong>${esc(meta.latestCommonObservation)} · 추정은 완료된 월까지만 사용합니다.</div>`:''}<div class="source-meta"><strong>업데이트 방식</strong>자동 동기화가 아닌 파일 스냅샷입니다. 새 파일을 변환한 JSON으로 불러오거나 사이트를 갱신합니다.</div><ul class="source-list">${data.assets.map(a=>`<li><strong>${esc(a.name)}</strong><small>${esc(a.ticker||a.id)} · ${a.returnType==='total_return'?'총수익':esc(a.returnType||'예시 가정')}</small><small>${esc(sourceText(a))}</small></li>`).join('')}</ul>${Array.isArray(meta.notes)?`<ul class="notes-list">${meta.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}<div class="source-meta"><strong>초기 비중 · 무위험금리</strong>비중은 예시 배분, 무위험금리 2.50%는 비교용 가정입니다. 실제 보유내역이나 현재 시장금리로 확인된 값이 아닙니다.</div>`;
 }
-function setTab(tab){if(!['overview','assumptions','sources'].includes(tab))tab='overview';document.querySelectorAll('.tab-panel').forEach(el=>el.hidden=el.id!==tab);document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));const labels={overview:['Portfolio','포트폴리오 대시보드','수익과 위험, 그리고 그 사이의 선택.'],assumptions:['Assumptions','투자 가정 설정','같은 데이터, 다른 관점. 가정이 만드는 변화를 살펴봅니다.'],sources:['Data notes','데이터와 계산 노트','숫자의 출처와 계산의 전제를 확인합니다.']};$('breadcrumb').textContent=labels[tab][0];$('pageTitle').innerHTML=`${labels[tab][1]}<span>.</span>`;$('pageSubtitle').textContent=labels[tab][2];}
+function setTab(tab){
+  if(!['overview','assumptions','sources'].includes(tab))tab='overview';
+  document.querySelectorAll('.tab-panel').forEach(el=>el.hidden=el.id!==tab);
+  document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  const labels={
+    overview:['포트폴리오 대시보드',''],
+    assumptions:['투자 가정 설정','같은 데이터, 다른 관점. 가정이 만드는 변화를 살펴봅니다.'],
+    sources:['데이터와 계산 노트','숫자의 출처와 계산의 전제를 확인합니다.']
+  };
+  const [title,subtitle]=labels[tab];
+  $('pageTitle').innerHTML=`${title}<span>.</span>`;
+  $('pageSubtitle').textContent=subtitle;
+  $('pageSubtitle').hidden=!subtitle;
+}
 function exportCsv(){
   const rows=[['portfolio','asset','weight_pct','annual_return_pct','annual_vol_pct','sharpe','risk_share_pct','assumption_mode','risk_free_pct','sample_start','sample_end']];
   Object.keys(names).forEach(k=>{const p=results[k];if(p)state.assets.forEach((a,i)=>rows.push([names[k],a.name,p.weights[i]*100,p.mu,p.vol,p.sharpe,p.riskShares[i]*100,state.edited?'user assumptions':data.meta.demo?'demo':'historical estimates',state.rf,data.meta.sampleStart||'',data.meta.sampleEnd||'']));});
@@ -130,7 +142,7 @@ function exportCsv(){
 }
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 document.querySelector('.brand').onclick=e=>{e.preventDefault();setTab('overview');};
-$('helpButton').onclick=()=>setTab('sources');$('editButton').onclick=()=>setTab('assumptions');$('coverage').onchange=renderCards;
+$('editButton').onclick=()=>setTab('assumptions');$('coverage').onchange=renderCards;
 $('applyButton').onclick=applyInputs;$('exportButton').onclick=exportCsv;
 $('targetApply').onclick=()=>{clearError();try{const nextTarget=numberInput($('targetInput'),'목표수익률');optimize(state.assets,cov,state.rf,nextTarget);state.target=nextTarget;recalculate();storageSave();if(results.target){chosen='target';renderSelection();message('목표 포트폴리오를 계산했습니다.');}else message('목표수익률이 달성 가능 범위를 벗어났습니다.',true);}catch(e){message(e.message,true);}};
 $('normalizeButton').onclick=()=>{try{const fields=[...document.querySelectorAll('[data-field=weight]')],v=fields.map(el=>numberInput(el,'비중'));const sum=v.reduce((a,b)=>a+b,0);if(sum<=0||v.some(x=>x<0))throw Error('0 이상의 비중을 입력하고 합계가 양수인지 확인하십시오.');fields.forEach((el,i)=>el.value=String(v[i]/sum*100));updateWeightSum();}catch(e){message(e.message,true);}};

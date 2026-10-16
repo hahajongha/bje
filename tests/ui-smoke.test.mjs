@@ -133,7 +133,7 @@ for (const [label, raw] of datasets) {
     const app = await boot(raw);
     assert.equal(app.get('alert').hidden, true, 'Data should initialize without demo fallback');
     assert.deepEqual(app.snapshot().data.assets.map(a => a.id), raw.assets.map(a => a.id));
-    assert.equal(app.get('modeBadge').textContent.includes('DEMO'), !!raw.meta?.demo);
+    assert.equal(app.get('sourceLabel').textContent.includes('예시 가정 데이터'), !!raw.meta?.demo);
     for (const id of ['portfolioCards', 'frontierChart', 'allocationTable', 'allocationDonut']) {
       assert.ok(app.get(id).innerHTML.length > 0);
       assert.doesNotMatch(app.get(id).innerHTML, /NaN|Infinity|undefined/);

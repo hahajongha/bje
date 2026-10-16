@@ -42,7 +42,7 @@ Python `numpy`, `openpyxl`을 사용하며 Excel을 읽기만 합니다. 제공�
 python scripts/build_data.py --info /private/data_info.xlsx --bb /private/data_bb.xlsx --as-of 2026-10-15 --months 60 --output /private/portfolio.json
 ```
 
-공개 저장소 안에 원본 또는 결과를 두면 실행을 거절합니다. 생성한 JSON을 사이트의 데이터 노트에서 가져올 수 있습니다.
+공개 저장소 안에 원본 또는 결과를 두면 실행을 거절합니다. 생성한 JSON은 CMA 탭의 JSON 불러오기에서 가져올 수 있습니다.
 
 | 자산 | 파일 / 시트 / 열 | 통화 처리 |
 | --- | --- | --- |
@@ -71,3 +71,7 @@ BJE_TEST_DATA=/private/portfolio.json node --test tests/ui-smoke.test.mjs
 ## 저장소 운영
 
 2026-10-16 연결 앱의 접근 승인 반영 후 `hahajongha/bje` 쓰기를 확인했습니다. 기본 브랜치는 `main`이며, 구현은 별도 기능 브랜치의 Pull Request로 검토합니다. 머지는 사용자가 요청할 때 수행합니다.
+
+## 화면 문구 원칙
+
+메뉴·제목·수치 라벨은 간결하게 유지하며 새로운 문장형 설명 주석은 추가하지 않습니다. 투자 가정 메뉴는 `CMA`, 해당 화면 제목은 `Capital Market Assumption`을 사용합니다.

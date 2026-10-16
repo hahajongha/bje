@@ -35,7 +35,7 @@ function install(raw,restore=true){
   data=normalizeData(raw);initial={assets:clone(data.assets),correlation:clone(data.correlation),rf:2.5,target:6,edited:false};
   state=clone(initial);cacheKey=`bje-portfolio-v1:${data.meta.dataFingerprint||JSON.stringify([data.meta, data.assets.map(a=>[a.id,a.mu,a.vol])])}`;
   if(restore)try{const s=JSON.parse(localStorage.getItem(cacheKey));if(s){validateInputs(s.assets,s.correlation);stats(s.assets.map(a=>a.weight),s.assets,covariance(s.assets,s.correlation),s.rf);if(!Number.isFinite(s.target))throw Error();state=s;}}catch{/* malformed local state is ignored */}
-  chosen='current';renderInputs();recalculate();renderSources();renderHistory();
+  chosen='current';renderInputs();recalculate();renderHistory();
 }
 function recalculate(){
   validateInputs(state.assets,state.correlation);cov=covariance(state.assets,state.correlation);
@@ -62,18 +62,18 @@ function renderCards(){
   }).join('');
   document.querySelectorAll('[data-portfolio]').forEach(b=>b.onclick=()=>{chosen=b.dataset.portfolio;renderSelection();});
 }
-function chartScales(points,W,H,pad={l:53,r:24,t:28,b:40}){
+function chartScales(points,W,H,pad={l:58,r:30,t:35,b:55}){
   let xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);let xmin=Math.min(...xs),xmax=Math.max(...xs),ymin=Math.min(...ys),ymax=Math.max(...ys);
   const dx=(xmax-xmin)||1,dy=(ymax-ymin)||1;xmin=Math.max(0,xmin-dx*.13);xmax+=dx*.1;ymin-=dy*.15;ymax+=dy*.13;
   return {xmin,xmax,ymin,ymax,pad,x:v=>pad.l+(v-xmin)/(xmax-xmin)*(W-pad.l-pad.r),y:v=>H-pad.b-(v-ymin)/(ymax-ymin)*(H-pad.t-pad.b)};
 }
 function renderFrontier(){
-  const W=690,H=303;const all=[...results.frontier,...state.assets.map(a=>({vol:a.vol,mu:a.mu})),...Object.keys(names).map(k=>results[k]).filter(Boolean)];
+  const W=Math.max(320,$('frontierChart').clientWidth||690),H=320;const all=[...results.frontier,...state.assets.map(a=>({vol:a.vol,mu:a.mu})),...Object.keys(names).map(k=>results[k]).filter(Boolean)];
   const s=chartScales(all.map(p=>[p.vol,p.mu]),W,H);let markup='';
-  for(let i=0;i<=4;i++){const yy=s.ymin+(s.ymax-s.ymin)*i/4,y=s.y(yy),xx=s.xmin+(s.xmax-s.xmin)*i/4,x=s.x(xx);markup+=`<line x1="53" y1="${y}" x2="666" y2="${y}" stroke="#2c3a30" stroke-dasharray="3 5"/><text x="43" y="${y+3}" text-anchor="end" fill="#7d9483" font-size="9">${fmt(yy,1)}</text><text x="${x}" y="284" text-anchor="middle" fill="#7d9483" font-size="9">${fmt(xx,1)}</text>`;}
-  markup+='<text x="5" y="13" fill="#8da18c" font-size="9">수익률 (%)</text><text x="665" y="301" text-anchor="end" fill="#8da18c" font-size="9">변동성 (%)</text>';
+  for(let i=0;i<=4;i++){const yy=s.ymin+(s.ymax-s.ymin)*i/4,y=s.y(yy),xx=s.xmin+(s.xmax-s.xmin)*i/4,x=s.x(xx);markup+=`<line x1="${s.pad.l}" y1="${y}" x2="${W-s.pad.r}" y2="${y}" stroke="#2c3a30" stroke-dasharray="3 5"/><text x="${s.pad.l-10}" y="${y+4}" text-anchor="end" fill="#7d9483" font-size="14">${fmt(yy,1)}</text><text x="${x}" y="${H-30}" text-anchor="middle" fill="#7d9483" font-size="14">${fmt(xx,1)}</text>`;}
+  markup+=`<text x="5" y="17" fill="#8da18c" font-size="14">수익률 (%)</text><text x="${W-s.pad.r}" y="${H-5}" text-anchor="end" fill="#8da18c" font-size="14">변동성 (%)</text>`;
   markup+=`<path d="${results.frontier.map((p,i)=>`${i?'L':'M'}${s.x(p.vol)},${s.y(p.mu)}`).join(' ')}" fill="none" stroke="#b6dba7" stroke-width="2.5"/>`;
-  markup+=state.assets.map((a,i)=>`<g><circle cx="${s.x(a.vol)}" cy="${s.y(a.mu)}" r="3.5" fill="${colors[i%colors.length]}" opacity=".65"/><text x="${s.x(a.vol)-6}" y="${s.y(a.mu)-9}" text-anchor="end" fill="#879f8b" font-size="8">${esc(a.name)}</text><title>${esc(a.name)} · 수익률 ${fmt(a.mu)}%, 변동성 ${fmt(a.vol)}%</title></g>`).join('');
+  markup+=state.assets.map((a,i)=>`<g><circle cx="${s.x(a.vol)}" cy="${s.y(a.mu)}" r="3.5" fill="${colors[i%colors.length]}" opacity=".65"/><text x="${s.x(a.vol)+(s.x(a.vol)<W/2?8:-8)}" y="${s.y(a.mu)-12}" text-anchor="${s.x(a.vol)<W/2?'start':'end'}" fill="#879f8b" font-size="12">${esc(a.name)}</text><title>${esc(a.name)} · 수익률 ${fmt(a.mu)}%, 변동성 ${fmt(a.vol)}%</title></g>`).join('');
   markup+=Object.keys(names).filter(k=>results[k]).sort(k=>k===chosen?1:-1).map(k=>{const p=results[k],sel=k===chosen;return `<g><circle cx="${s.x(p.vol)}" cy="${s.y(p.mu)}" r="${sel?7:4}" fill="${sel?'#e8c78c':'#d5e0d0'}" stroke="#18211f" stroke-width="2"/>${sel?`<circle cx="${s.x(p.vol)}" cy="${s.y(p.mu)}" r="12" fill="none" stroke="#e8c78c" opacity=".3"/>`:''}<title>${names[k]} · ${fmt(p.mu)}% / ${fmt(p.vol)}%</title></g>`;}).join('');
   $('frontierChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="연간 변동성과 수익률의 효율적 경계선">${markup}</svg>`;
   $('frontierStatus').textContent=state.edited?'사용자 가정 기준':'동일 표본 · 연율 기준';
@@ -81,7 +81,7 @@ function renderFrontier(){
 function renderAllocation(){
   const p=results[chosen];$('selectedLabel').textContent=names[chosen];let offset=0;const r=63,c=2*Math.PI*r;
   const circles=p.weights.map((w,i)=>{const str=`<circle cx="85" cy="85" r="${r}" fill="none" stroke="${colors[i%colors.length]}" stroke-width="14" stroke-dasharray="${Math.max(0,w*c-.8)} ${c}" stroke-dashoffset="${-offset}" transform="rotate(-90 85 85)"/>`;offset+=w*c;return str;}).join('');
-  $('allocationDonut').innerHTML=`<svg viewBox="0 0 170 170" role="img" aria-label="선택 포트폴리오의 자산별 비중"><circle cx="85" cy="85" r="63" fill="none" stroke="#2a392e" stroke-width="14"/>${circles}<text x="85" y="83" text-anchor="middle" fill="#e4edda" font-size="26" font-family="inherit">100<tspan font-size="13">%</tspan></text><text x="85" y="103" text-anchor="middle" fill="#8ba184" font-size="8" letter-spacing="1.5">FULLY INVESTED</text></svg>`;
+  $('allocationDonut').innerHTML=`<svg viewBox="0 0 170 170" role="img" aria-label="선택 포트폴리오의 자산별 비중"><circle cx="85" cy="85" r="63" fill="none" stroke="#2a392e" stroke-width="14"/>${circles}<text x="85" y="83" text-anchor="middle" fill="#e4edda" font-size="30" font-family="inherit">100<tspan font-size="16">%</tspan></text><text x="85" y="104" text-anchor="middle" fill="#8ba184" font-size="10" letter-spacing=".2">FULLY INVESTED</text></svg>`;
   $('allocationLegend').innerHTML=state.assets.map((a,i)=>`<div class="allocation-legend-row"><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(a.name)}<strong>${fmt(p.weights[i]*100)}<small> %</small></strong></div>`).join('');
   $('allocationTable').innerHTML=state.assets.map((a,i)=>{const diff=(p.weights[i]-a.weight)*100;return `<tr><td><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(a.name)}</td><td>${fmt(a.weight*100)}%</td><td>${fmt(p.weights[i]*100)}%</td><td class="${Math.abs(diff)<.005?'':diff>0?'delta-positive':'delta-negative'}">${diff>0?'+':''}${fmt(diff)}</td><td>${fmt(p.riskShares[i]*100,1)}% <i class="risk-bar"><span style="width:${Math.min(100,Math.abs(p.riskShares[i]*100))}%;background:${p.riskShares[i]<0?'#e3a49c':colors[i%colors.length]}"></span></i></td></tr>`;}).join('');
 }
@@ -106,33 +106,22 @@ function renderHistory(){
   const monthly=data.monthly;
   if(!monthly||!monthly.dates?.length){$('historyChart').innerHTML='<div class="empty-chart">실제 시계열이 없는 예시 데이터입니다.<br>데이터 스냅샷을 불러오면 총수익 추이가 표시됩니다.</div>';$('historyLegend').innerHTML='';return;}
   const dates=monthly.dates.slice(-(period+1)),base=monthly.base100.slice(-(period+1)),n=base.length;
-  const v=base.map(row=>row.map((x,i)=>x/base[0][i]*100));const W=1030,H=220,pad={l:49,r:25,t:15,b:34};
+  const v=base.map(row=>row.map((x,i)=>x/base[0][i]*100));const W=Math.max(320,$('historyChart').clientWidth||1030),H=250,pad={l:58,r:35,t:20,b:42};
   const ys=v.flat();let min=Math.min(...ys),max=Math.max(...ys);const dy=max-min||1;min-=dy*.1;max+=dy*.1;
   const x=i=>pad.l+i/(n-1)*(W-pad.l-pad.r),y=a=>H-pad.b-(a-min)/(max-min)*(H-pad.t-pad.b);let svg='';
-  for(let i=0;i<=3;i++){const val=min+(max-min)*i/3;svg+=`<line x1="49" x2="1005" y1="${y(val)}" y2="${y(val)}" stroke="#2a3a2f" stroke-dasharray="3 5"/><text x="38" y="${y(val)+4}" fill="#7e9684" text-anchor="end" font-size="9">${fmt(val,0)}</text>`;}
-  for(let i=0;i<=5;i++){const j=Math.round((n-1)*i/5);svg+=`<text x="${x(j)}" y="211" text-anchor="middle" fill="#7e9684" font-size="9">${esc(dates[j].slice(0,7).replace('-','.'))}</text>`;}
+  for(let i=0;i<=3;i++){const val=min+(max-min)*i/3;svg+=`<line x1="${pad.l}" x2="${W-pad.r}" y1="${y(val)}" y2="${y(val)}" stroke="#2a3a2f" stroke-dasharray="3 5"/><text x="${pad.l-10}" y="${y(val)+4}" fill="#7e9684" text-anchor="end" font-size="14">${fmt(val,0)}</text>`;}
+  const ticks=W<500?2:W<800?3:5;
+  for(let i=0;i<=ticks;i++){const j=Math.round((n-1)*i/ticks);svg+=`<text x="${x(j)}" y="${H-12}" text-anchor="middle" fill="#7e9684" font-size="14">${esc(dates[j].slice(0,7).replace('-','.'))}</text>`;}
   svg+=data.assets.map((a,j)=>`<path d="${v.map((row,i)=>`${i?'L':'M'}${x(i)},${y(row[j])}`).join(' ')}" fill="none" stroke="${colors[j%colors.length]}" stroke-width="1.8"/>`).join('');
   $('historyChart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="원화 기준 자산별 과거 누적 총수익지수">${svg}</svg>`;
   $('historyLegend').innerHTML=data.assets.map((a,i)=>`<span><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(a.name)} <strong>${fmt((v.at(-1)[i]/100-1)*100,1)}%</strong></span>`).join('');
 }
-function renderSources(){
-  const meta=data.meta;
-  const sourceText=a=>typeof a.source==='string'?a.source:a.source?`${a.source.file} / ${a.source.sheet} / ${a.source.column} · ${a.source.conversion}`:'가상 입력';
-  $('sourceNotes').innerHTML=`<div class="source-meta"><strong>${meta.demo?'데모 · 가상 입력':meta.mode==='private_actual'?'Google Drive / data_git 스냅샷':'사용자 데이터 스냅샷'}</strong>${meta.demo?'원본 데이터는 공개 코드에 포함되지 않습니다.':`분석기간 ${esc(meta.sampleStart)} ~ ${esc(meta.sampleEnd)}<br>월간 수익률 ${esc(meta.observations)}개 · 기준통화 KRW`}</div>${meta.latestCommonObservation?`<div class="source-meta"><strong>최신 공통 일별 관측</strong>${esc(meta.latestCommonObservation)} · 추정은 완료된 월까지만 사용합니다.</div>`:''}<div class="source-meta"><strong>업데이트 방식</strong>자동 동기화가 아닌 파일 스냅샷입니다. 새 파일을 변환한 JSON으로 불러오거나 사이트를 갱신합니다.</div><ul class="source-list">${data.assets.map(a=>`<li><strong>${esc(a.name)}</strong><small>${esc(a.ticker||a.id)} · ${a.returnType==='total_return'?'총수익':esc(a.returnType||'예시 가정')}</small><small>${esc(sourceText(a))}</small></li>`).join('')}</ul>${Array.isArray(meta.notes)?`<ul class="notes-list">${meta.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>`:''}<div class="source-meta"><strong>초기 비중 · 무위험금리</strong>비중은 예시 배분, 무위험금리 2.50%는 비교용 가정입니다. 실제 보유내역이나 현재 시장금리로 확인된 값이 아닙니다.</div>`;
-}
 function setTab(tab){
-  if(!['overview','assumptions','sources'].includes(tab))tab='overview';
+  if(!['overview','assumptions'].includes(tab))tab='overview';
   document.querySelectorAll('.tab-panel').forEach(el=>el.hidden=el.id!==tab);
   document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
-  const labels={
-    overview:['포트폴리오 대시보드',''],
-    assumptions:['투자 가정 설정','같은 데이터, 다른 관점. 가정이 만드는 변화를 살펴봅니다.'],
-    sources:['데이터와 계산 노트','숫자의 출처와 계산의 전제를 확인합니다.']
-  };
-  const [title,subtitle]=labels[tab];
-  $('pageTitle').innerHTML=`${title}<span>.</span>`;
-  $('pageSubtitle').textContent=subtitle;
-  $('pageSubtitle').hidden=!subtitle;
+  $('pageTitle').innerHTML=tab==='assumptions'?'Capital Market Assumption':'포트폴리오 대시보드<span>.</span>';
+  if(tab==='overview'){renderFrontier();renderHistory();}
 }
 function exportCsv(){
   const rows=[['portfolio','asset','weight_pct','annual_return_pct','annual_vol_pct','sharpe','risk_share_pct','assumption_mode','risk_free_pct','sample_start','sample_end']];
@@ -150,3 +139,14 @@ $('resetButton').onclick=()=>{clearError();state=clone(initial);renderInputs();r
 document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{period=Number(b.dataset.period);document.querySelectorAll('[data-period]').forEach(p=>p.classList.toggle('active',p===b));renderHistory();});
 $('importFile').onchange=async e=>{clearError();const file=e.target.files[0];if(!file)return;try{if(file.size>5e6)throw Error('JSON 파일은 5MB 이하여야 합니다.');const raw=JSON.parse(await file.text());normalizeData(raw);install(raw,false);message('새 데이터 스냅샷을 적용했습니다. 새로고침 시 원래 스냅샷으로 돌아갑니다.');}catch(err){message('데이터를 불러오지 못했습니다: '+err.message,true);}finally{e.target.value='';}};
 try{const response=await fetch('./data.json',{cache:'no-store'});if(!response.ok)throw Error('data');install(await response.json());}catch(e){install(demoData);message('데이터 스냅샷을 읽지 못해 예시 가정으로 시작합니다.',true);}
+
+if(typeof ResizeObserver!=='undefined'){
+  const widths=new WeakMap();
+  const observer=new ResizeObserver(entries=>entries.forEach(({target,contentRect})=>{
+    const previous=widths.get(target);
+    widths.set(target,contentRect.width);
+    if(!contentRect.width||previous===contentRect.width)return;
+    if(target.id==='frontierChart')renderFrontier();else renderHistory();
+  }));
+  observer.observe($('frontierChart'));observer.observe($('historyChart'));
+}

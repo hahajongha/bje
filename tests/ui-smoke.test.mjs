@@ -517,3 +517,50 @@ test('imported asset names remain plain text in selection markup', async () => {
   }
   assert.equal(app.get('selectedLabel').textContent,raw.assets[0].name);
 });
+
+test('frontier axis zoom and auto reset preserve portfolio results and allocation', async () => {
+  const app=await boot(demoData),before=app.snapshot();
+  const allocation=app.get('allocationLegend').innerHTML,original=app.get('frontierChart').innerHTML;
+  const apply=()=>app.get('frontierAxisForm').onsubmit({preventDefault(){}});
+  for(const [id,value] of Object.entries({frontierXMin:2,frontierXMax:6,frontierYMin:-1,frontierYMax:5}))app.get(id).value=value;
+  apply();
+  const chart=app.get('frontierChart').innerHTML;
+  assert.equal(app.get('frontierAxisError').hidden,true);
+  assert.match(chart,/>-1\.00<\/text>/);
+  assert.match(chart,/>6\.00<\/text>/);
+  assert.match(chart,/clip-path="url\(#frontierPlotClip\)"/);
+  assert.doesNotMatch(chart,/data-chart-asset="5"/,'Out-of-range asset must not remain a focusable plot target');
+  assert.doesNotMatch(chart,/NaN|Infinity/);
+  assert.notEqual(chart,original);
+  assert.deepEqual(app.snapshot(),before);
+  assert.equal(app.get('allocationLegend').innerHTML,allocation);
+  app.get('coverage').onchange();
+  assert.equal(app.get('frontierChart').innerHTML,chart);
+  app.get('frontierAxisReset').click();
+  assert.equal(app.get('frontierChart').innerHTML,original);
+  for(const axis of ['X','Y'])for(const bound of ['Min','Max'])assert.equal(app.get(`frontier${axis}${bound}`).value,'');
+});
+
+test('invalid frontier ranges leave the last valid chart intact; either axis can stay automatic', async () => {
+  const app=await boot(demoData),before=app.snapshot();
+  const apply=()=>app.get('frontierAxisForm').onsubmit({preventDefault(){}});
+  const previous=app.get('frontierChart').innerHTML;
+  for(const [min,max] of [['2','2'],['6','2'],['-1','6'],['2',''],['Infinity','6'],['2','2.000000000001']]){
+    app.get('frontierXMin').value=min;app.get('frontierXMax').value=max;apply();
+    assert.equal(app.get('frontierAxisError').hidden,false);
+    assert.equal(app.get('frontierChart').innerHTML,previous);
+    assert.deepEqual(app.snapshot(),before);
+  }
+  app.get('frontierXMin').value='';app.get('frontierXMax').value='';
+  app.get('frontierYMin').value='3.001';app.get('frontierYMax').value='3.005';apply();
+  assert.equal(app.get('frontierAxisError').hidden,true);
+  assert.match(app.get('frontierChart').innerHTML,/>3\.0010<\/text>/);
+  assert.match(app.get('frontierChart').innerHTML,/>3\.0050<\/text>/);
+  assert.doesNotMatch(app.get('frontierChart').innerHTML,/NaN|Infinity/);
+  app.get('frontierYMin').value='';app.get('frontierYMax').value='';
+  app.get('frontierXMin').value='0';app.get('frontierXMax').value='1e308';apply();
+  assert.equal(app.get('frontierAxisError').hidden,true);
+  assert.doesNotMatch(app.get('frontierChart').innerHTML,/NaN|Infinity/);
+  app.get('frontierAxisReset').click();
+  assert.equal(app.get('frontierChart').innerHTML,previous);
+});

@@ -7,7 +7,7 @@
 </head>
 <body>
 <aside class="sidebar">
-  <a class="brand" href="#overview" aria-label="BJE 홈"><span class="brand-symbol">b.</span><span>BJE<span class="brand-sub">PORTFOLIO LAB</span></span></a>
+  <a class="brand" href="#overview" aria-label="BJE 홈"><span class="brand-symbol">b.</span><span>BJE</span></a>
   <div class="nav-label">WORKSPACE</div>
   <nav aria-label="주 메뉴">
     <button class="nav-item active" data-tab="overview">PORT</button>
@@ -48,8 +48,7 @@
         <article class="panel"><div class="panel-heading"><div><div class="eyebrow">ALLOCATION DETAIL</div><h2>비중과 위험의 균형</h2></div><span class="small">현재 → 선택</span></div><div class="table-scroll"><table class="allocation-table"><thead><tr><th>자산군</th><th>현재 비중</th><th>선택 비중</th><th>변경 %p</th><th>위험기여 비중</th></tr></thead><tbody id="allocationTable"></tbody></table></div><div class="panel-note">위험기여 비중은 공분산을 반영하며 음수가 될 수 있습니다.</div></article>
         <article class="panel target-panel"><div class="eyebrow">YOUR OBJECTIVE</div><h2>목표수익률 탐색</h2><p>목표를 달성하는 조합 중<br>변동성이 가장 낮은 비중을 찾습니다.</p><label for="targetInput" class="small">연간 목표수익률</label><div class="target-field"><input id="targetInput" type="number" step="0.1" value="6" aria-label="연간 목표수익률"><span>%</span></div><button class="button primary full" id="targetApply">목표 적용 <span>→</span></button><p class="small" id="feasibleRange"></p></article>
       </div>
-      <article class="panel history-panel"><div class="panel-heading"><div><div class="eyebrow">HISTORICAL CONTEXT</div><h2>자산별 누적 총수익</h2></div><div class="segmented" aria-label="차트 표시 기간"><button data-period="12">1Y</button><button data-period="36">3Y</button><button data-period="60" class="active">5Y</button></div></div><div id="historyChart" class="chart-wrap"></div><div id="historyLegend" class="chart-legend"></div><div class="chart-foot"><span>선택 구간 첫 관측값 = 100 · 해외 자산은 원화 비헤지 기준</span><span>과거 성과는 미래 수익률을 보장하지 않습니다.</span></div></article>
-      <p class="method-footnote">수익률 범위는 정규분포를 가정한 1년 실현수익률 구간입니다. 추정치의 신뢰구간이 아니며, 거래비용·세금은 반영하지 않습니다.</p>
+      <article class="panel history-panel"><div class="panel-heading"><div><div class="eyebrow">HISTORICAL CONTEXT</div><h2>자산별 누적 총수익</h2></div><div class="segmented" aria-label="차트 표시 기간"><button data-period="12">1Y</button><button data-period="36">3Y</button><button data-period="60" class="active">5Y</button></div></div><div id="historyChart" class="chart-wrap"></div><div id="historyLegend" class="chart-legend"></div><div class="chart-foot"><span>선택 구간 첫 관측값 = 100 · 해외 자산은 원화 비헤지 기준</span></div></article>
     </section>
     <section id="assumptions" class="tab-panel" hidden>
       <div id="bondReference" class="info-reference"></div>
@@ -81,7 +80,6 @@
       <div id="hedge-modelB" class="hedge-panel" hidden><article class="panel hedge-model-empty"><h2>환헤지모델B</h2><span class="small">모형 미설정</span></article></div>
     </section>
     <section id="fxmodel" class="tab-panel" hidden><div id="fxModelHost"></div></section>
-    <footer><span><strong>BJE</strong> PORTFOLIO LAB</span><span>Clarity in every allocation.</span><span id="footerVersion">RESEARCH WORKSPACE / 01</span></footer>
   </main>
 </div><div id="toast" role="status" hidden></div>
 <script type="module" src="app.mjs"></script>

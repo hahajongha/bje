@@ -19,7 +19,8 @@
 </aside>
 <div class="shell">
   <main>
-    <div class="page-heading"><h1 id="pageTitle">포트폴리오 대시보드<span>.</span></h1></div>
+    <div class="page-heading"><h1 id="pageTitle">포트폴리오 대시보드<span>.</span></h1><div class="info-import"><label class="button secondary" for="dataInfoImportFile">시장자료 불러오기</label><input type="file" id="dataInfoImportFile" accept=".json,application/json" hidden><span id="dataInfoSource" class="small" aria-live="polite">시장자료 미연결</span></div></div>
+    <div id="dataInfoError" class="fx-model-error" role="alert" hidden></div>
     <div id="alert" role="alert" hidden></div>
     <section id="overview" class="tab-panel">
       <div class="section-heading"><h2>포트폴리오 비교 <span class="pill">4 STRATEGIES</span></h2><div class="inline-control"><label for="coverage">1년 수익률 범위</label><select id="coverage"><option value=".68">68%</option><option value=".9" selected>90%</option><option value=".95">95%</option><option value=".99">99%</option></select></div></div>
@@ -44,11 +45,13 @@
       <p class="method-footnote">수익률 범위는 정규분포를 가정한 1년 실현수익률 구간입니다. 추정치의 신뢰구간이 아니며, 거래비용·세금은 반영하지 않습니다.</p>
     </section>
     <section id="assumptions" class="tab-panel" hidden>
+      <div id="bondReference" class="info-reference"></div>
       <article class="panel input-panel"><div class="panel-heading"><div><div class="eyebrow">CAPITAL MARKET ASSUMPTIONS</div><h2>자산별 투자 가정</h2></div><span class="pill">연율 · % 단위</span></div><div class="table-scroll"><table class="input-table"><thead><tr><th>자산군</th><th>수익률 %</th><th>변동성 %</th><th>현재 비중 %</th></tr></thead><tbody id="assetInputs"></tbody></table></div><div class="input-settings"><label>무위험금리 % <input id="riskFreeInput" type="number" step="0.01" value="2.5"></label><span id="weightSum">비중 합계 —</span><button class="text-button" id="normalizeButton">비중을 100%로 정규화</button></div></article>
       <article class="panel correlation-panel"><div class="panel-heading"><div><div class="eyebrow">DIVERSIFICATION</div><h2>상관관계</h2></div><span class="small">대칭 적용 · −1 ~ 1</span></div><div class="table-scroll" id="correlationInputs"></div></article>
       <div class="form-actions"><label class="button secondary" for="importFile">JSON 불러오기 <span>↑</span></label><input type="file" id="importFile" accept=".json,application/json" hidden><button class="button secondary" id="resetButton">초기 가정 복원</button><button class="button primary" id="applyButton">가정 적용 <span>→</span></button><span class="small" id="saveStatus">변경사항은 적용 후 이 브라우저에 저장됩니다.</span></div>
     </section>
     <section id="risk" class="tab-panel" hidden>
+      <div id="marketSnapshot" class="info-market"></div>
       <div class="section-heading"><h2>포트폴리오 리스크</h2><div class="inline-control"><label for="riskPortfolio">포트폴리오</label><select id="riskPortfolio"><option value="current">현재 비중</option><option value="minVol">최소 변동성</option><option value="target">목표수익률</option><option value="maxSharpe">최대 Sharpe</option></select></div></div>
       <div id="riskContent"></div>
     </section>
@@ -60,10 +63,12 @@
       </div>
       <div id="hedge-monitor" class="hedge-panel">
         <article class="panel">
-          <div class="hedge-toolbar"><div><h2>환헤지비용</h2><span class="small">연 % · + 수취 / − 지급</span></div><div><span id="hedgeSource" class="small">데이터 미연결</span><button id="hedgeImportButton" class="button secondary">데이터 불러오기</button></div></div>
+          <div class="hedge-toolbar"><div><h2>환헤지 프리미엄</h2><span id="hedgeUnit" class="small">연 % · + 수취 / − 지급</span></div><div><span id="hedgeSource" class="small">데이터 미연결</span><button id="hedgeImportButton" class="button secondary">데이터 불러오기</button></div></div>
           <input type="file" id="hedgeImportFile" accept=".json,application/json" hidden>
           <div id="hedgeGrid" class="hedge-grid"></div>
         </article>
+        <div class="section-heading info-distribution-heading"><div><h2>과거 프리미엄 분포</h2><span id="hedgeHistoryUnit" class="small">3M·6M·12M 평균 · 연 %</span></div><div class="inline-control"><span class="info-marker-label">최근값</span><label for="hedgeHistoryPeriod">조회 기간</label><select id="hedgeHistoryPeriod"><option value="1">1Y</option><option value="3">3Y</option><option value="5" selected>5Y</option><option value="all">전체</option></select></div></div>
+        <div id="hedgeHistograms" class="info-histogram-grid"></div>
       </div>
       <div id="hedge-modelA" class="hedge-panel" hidden><article class="panel hedge-model-empty"><h2>환헤지모델A</h2><span class="small">모형 미설정</span></article></div>
       <div id="hedge-modelB" class="hedge-panel" hidden><article class="panel hedge-model-empty"><h2>환헤지모델B</h2><span class="small">모형 미설정</span></article></div>

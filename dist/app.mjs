@@ -3,6 +3,7 @@ import { demoData } from './demo-data.mjs';
 import { normalizeFxHedge, renderHedgeMarkup } from './fx-hedge.mjs';
 import { renderRiskMarkup } from './risk.mjs';
 import { defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios } from './allocation.mjs';
+import { initDataInfoUI } from './data-info-ui.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#bddb9c','#80b6a5','#d7bb86','#87a6c0','#b5a5c7','#b68e81','#7ec9cf'];
@@ -13,6 +14,7 @@ const zValues = {'.68':0.994457883,'.9':1.644853627,'.95':1.959963985,'.99':2.57
 const fmt = (x,n=2) => Number.isFinite(x) ? x.toLocaleString('ko-KR',{minimumFractionDigits:n,maximumFractionDigits:n}) : '—';
 const esc = x => String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data, initial, state, results, cov, chosen='current', period=60, toastTimer, cacheKey, fxSnapshot=normalizeFxHedge(null), cloud=[], exploredIndex=0;
+const dataInfoUI=initDataInfoUI({document,onHedge:next=>{fxSnapshot=next;renderHedge();}});
 
 function normalizeData(raw) {
   if(!raw || !Array.isArray(raw.assets) || raw.assets.length<2 || raw.assets.length>8) throw Error('자산 수는 2~8개여야 합니다.');
@@ -59,7 +61,7 @@ function install(raw,restore=true){
   }}catch{/* incompatible saved state is ignored */}
   validateState(nextState);
   data=nextData;initial=nextInitial;state=nextState;cacheKey=nextKey;
-  fxSnapshot=normalizeFxHedge(data.fxHedge);
+  if(Object.hasOwn(data,'fxHedge') || !dataInfoUI.getSnapshot()) fxSnapshot=normalizeFxHedge(data.fxHedge);
   chosen='current';renderInputs();recalculate();renderAllocationInputs();renderHistory();renderHedge();
 }
 function recalculate(){
@@ -84,6 +86,7 @@ function renderRisk(){
 function renderHedge(){
   $('hedgeGrid').innerHTML=renderHedgeMarkup(fxSnapshot);
   $('hedgeSource').textContent=fxSnapshot.source;
+  dataInfoUI.renderHedge(fxSnapshot);
 }
 function setHedgeTab(tab){
   if(!['monitor','modelA','modelB'].includes(tab))tab='monitor';
@@ -274,6 +277,8 @@ $('resetButton').onclick=()=>{clearError();state=clone(initial);renderInputs();r
 document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{period=Number(b.dataset.period);document.querySelectorAll('[data-period]').forEach(p=>p.classList.toggle('active',p===b));renderHistory();});
 $('importFile').onchange=async e=>{clearError();const file=e.target.files[0];if(!file)return;try{if(file.size>5e6)throw Error('JSON 파일은 5MB 이하여야 합니다.');const raw=JSON.parse(await file.text());normalizeData(raw);install(raw,false);message('새 데이터 스냅샷을 적용했습니다. 새로고침 시 원래 스냅샷으로 돌아갑니다.');}catch(err){message('데이터를 불러오지 못했습니다: '+err.message,true);}finally{e.target.value='';}};
 try{const response=await fetch('./data.json',{cache:'no-store'});if(!response.ok)throw Error('data');install(await response.json());}catch(e){install(demoData);message('데이터 스냅샷을 읽지 못해 예시 가정으로 시작합니다.',true);}
+const embeddedInfo=$('dataInfoEmbedded');
+if(embeddedInfo?.textContent){try{dataInfoUI.apply(JSON.parse(embeddedInfo.textContent));}catch(error){$('dataInfoError').textContent='시장자료 초기화 오류 · '+error.message;$('dataInfoError').hidden=false;}}
 
 if(typeof ResizeObserver!=='undefined'){
   const widths=new WeakMap();

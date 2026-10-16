@@ -1,5 +1,7 @@
 import { covariance, stats, optimize, validateInputs } from './portfolio.mjs';
 import { demoData } from './demo-data.mjs';
+import { normalizeFxHedge, renderHedgeMarkup } from './fx-hedge.mjs';
+import { renderRiskMarkup } from './risk.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#bddb9c','#80b6a5','#d7bb86','#87a6c0','#b5a5c7','#b68e81'];
@@ -7,7 +9,7 @@ const names = { current:'현재 비중', minVol:'최소 변동성', target:'목�
 const zValues = {'.68':0.994457883,'.9':1.644853627,'.95':1.959963985,'.99':2.575829304};
 const fmt = (x,n=2) => Number.isFinite(x) ? x.toLocaleString('ko-KR',{minimumFractionDigits:n,maximumFractionDigits:n}) : '—';
 const esc = x => String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let data, initial, state, results, cov, chosen='current', period=60, toastTimer, cacheKey;
+let data, initial, state, results, cov, chosen='current', period=60, toastTimer, cacheKey, fxSnapshot=normalizeFxHedge(null);
 
 function normalizeData(raw) {
   if(!raw || !Array.isArray(raw.assets) || raw.assets.length<2 || raw.assets.length>8) throw Error('자산 수는 2~8개여야 합니다.');
@@ -24,6 +26,7 @@ function normalizeData(raw) {
     if(monthly.dates.some((d,i)=>!/^\d{4}-\d{2}(?:-\d{2})?$/.test(d)||(i>0&&d<=monthly.dates[i-1]))) throw Error('월별 날짜는 중복 없이 오름차순이어야 합니다.');
     if(monthly.base100.some(r=>!Array.isArray(r)||r.length!==assets.length||r.some(v=>!Number.isFinite(v)||v<=0))) throw Error('총수익지수는 양의 유한수여야 합니다.');
   }
+  normalizeFxHedge(raw.fxHedge);
   return {...raw,assets,meta,monthly};
 }
 function clone(x){return JSON.parse(JSON.stringify(x));}
@@ -35,7 +38,8 @@ function install(raw,restore=true){
   data=normalizeData(raw);initial={assets:clone(data.assets),correlation:clone(data.correlation),rf:2.5,target:6,edited:false};
   state=clone(initial);cacheKey=`bje-portfolio-v1:${data.meta.dataFingerprint||JSON.stringify([data.meta, data.assets.map(a=>[a.id,a.mu,a.vol])])}`;
   if(restore)try{const s=JSON.parse(localStorage.getItem(cacheKey));if(s){validateInputs(s.assets,s.correlation);stats(s.assets.map(a=>a.weight),s.assets,covariance(s.assets,s.correlation),s.rf);if(!Number.isFinite(s.target))throw Error();state=s;}}catch{/* malformed local state is ignored */}
-  chosen='current';renderInputs();recalculate();renderHistory();
+  fxSnapshot=normalizeFxHedge(data.fxHedge);
+  chosen='current';renderInputs();recalculate();renderHistory();renderHedge();
 }
 function recalculate(){
   validateInputs(state.assets,state.correlation);cov=covariance(state.assets,state.correlation);
@@ -52,7 +56,25 @@ function recalculate(){
   $('feasibleRange').textContent=`달성 가능 범위 ${fmt(Math.min(...state.assets.map(a=>a.mu)))} ~ ${fmt(Math.max(...state.assets.map(a=>a.mu)))}%`;
   renderSelection();
 }
-function renderSelection(){renderCards();renderFrontier();renderAllocation();}
+function renderSelection(){renderCards();renderFrontier();renderAllocation();renderRisk();}
+function renderRisk(){
+  $('riskPortfolio').innerHTML=Object.entries(names).map(([key,name])=>`<option value="${key}" ${results[key]?'':'disabled'}>${name}${key==='target'&&!results[key]?' · 달성 불가':''}</option>`).join('');
+  $('riskPortfolio').value=chosen;
+  $('riskContent').innerHTML=renderRiskMarkup(results[chosen],state.assets,names[chosen]);
+}
+function renderHedge(){
+  $('hedgeGrid').innerHTML=renderHedgeMarkup(fxSnapshot);
+  $('hedgeSource').textContent=fxSnapshot.source;
+}
+function setHedgeTab(tab){
+  if(!['monitor','modelA','modelB'].includes(tab))tab='monitor';
+  document.querySelectorAll('.hedge-panel').forEach(el=>el.hidden=el.id!==`hedge-${tab}`);
+  document.querySelectorAll('[data-hedge-tab]').forEach(button=>{
+    const selected=button.dataset.hedgeTab===tab;
+    button.classList.toggle('active',selected);
+    button.setAttribute('aria-pressed',String(selected));
+  });
+}
 function renderCards(){
   const z=zValues[String(Number($('coverage').value)).replace(/^0/,'')];
   $('portfolioCards').innerHTML=Object.entries(names).map(([key,name],i)=>{
@@ -117,10 +139,13 @@ function renderHistory(){
   $('historyLegend').innerHTML=data.assets.map((a,i)=>`<span><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(a.name)} <strong>${fmt((v.at(-1)[i]/100-1)*100,1)}%</strong></span>`).join('');
 }
 function setTab(tab){
-  if(!['overview','assumptions'].includes(tab))tab='overview';
+  if(!['overview','assumptions','risk','hedge'].includes(tab))tab='overview';
   document.querySelectorAll('.tab-panel').forEach(el=>el.hidden=el.id!==tab);
   document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
-  $('pageTitle').innerHTML=tab==='assumptions'?'Capital Market Assumption':'포트폴리오 대시보드<span>.</span>';
+  const titles={overview:'포트폴리오 대시보드<span>.</span>',assumptions:'Capital Market Assumption',risk:'리스크',hedge:'환헤지'};
+  $('pageTitle').innerHTML=titles[tab];
+  document.querySelector('.data-strip').hidden=tab==='hedge';
+  document.querySelector('.heading-actions').hidden=tab==='hedge';
   if(tab==='overview'){renderFrontier();renderHistory();}
 }
 function exportCsv(){
@@ -130,6 +155,19 @@ function exportCsv(){
   const blob=new Blob(['\uFEFF'+rows.map(r=>r.map(safe).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='BJE-portfolio.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);message('포트폴리오 결과를 CSV로 내보냈습니다.');
 }
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
+document.querySelectorAll('[data-hedge-tab]').forEach(b=>b.onclick=()=>setHedgeTab(b.dataset.hedgeTab));
+$('riskPortfolio').onchange=()=>{if(results[$('riskPortfolio').value]){chosen=$('riskPortfolio').value;renderSelection();}};
+$('hedgeImportButton').onclick=()=>$('hedgeImportFile').click();
+$('hedgeImportFile').onchange=async event=>{
+  clearError();const file=event.target.files[0];if(!file)return;
+  try{
+    if(file.size>5e6)throw Error('JSON 파일은 5MB 이하여야 합니다.');
+    const raw=JSON.parse(await file.text());
+    const next=normalizeFxHedge(raw.fxHedge??raw);
+    fxSnapshot=next;renderHedge();message('환헤지 데이터 적용 · 새로고침 시 초기화');
+  }catch(error){message('환헤지 데이터를 불러오지 못했습니다: '+error.message,true);}
+  finally{event.target.value='';}
+};
 document.querySelector('.brand').onclick=e=>{e.preventDefault();setTab('overview');};
 $('editButton').onclick=()=>setTab('assumptions');$('coverage').onchange=renderCards;
 $('applyButton').onclick=applyInputs;$('exportButton').onclick=exportCsv;

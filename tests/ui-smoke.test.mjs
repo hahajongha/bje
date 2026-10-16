@@ -17,6 +17,9 @@ import { renderRiskMarkup } from '../dist/risk.mjs';
 import { defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios } from '../dist/allocation.mjs';
 import { frontierTarget } from '../dist/frontier-target.mjs';
 import { initDataInfoUI } from '../dist/data-info-ui.mjs';
+import { mountHedgeLab } from '../dist/hedge-lab.mjs';
+import { mountFxConsensus } from '../dist/fx-consensus.mjs';
+import { mountFxModel } from '../dist/fx-model-ui.mjs';
 
 const html = await fs.readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
 const source = (await fs.readFile(new URL('../dist/app.mjs', import.meta.url), 'utf8'))
@@ -25,22 +28,36 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 function createDocument() {
   const byId = new Map();
-  const roots = [];
-  const groups = new Map();
-
+  const voidTags = new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);
+  const descendants = root => root.children.flatMap(child => [child, ...descendants(child)]);
+  function matches(el, selector) {
+    if (selector.startsWith('#')) return el.id === selector.slice(1);
+    if (selector.startsWith('.')) return el.classList.contains(selector.slice(1));
+    const match = selector.match(/^\[([\w-]+)(?:=["']?([^"'\]]+)["']?)?\]$/);
+    if (match) return el.getAttribute(match[1]) != null && (match[2] === undefined || el.getAttribute(match[1]) === match[2]);
+    assert.match(selector, /^[a-z][\w-]*$/i, `Unsupported DOM-stub selector: ${selector}`);
+    return el.tagName.toLowerCase() === selector.toLowerCase();
+  }
+  function query(root, selector) {
+    const parts = selector.trim().split(/\s+/);
+    let parents = [root];
+    for (const part of parts) parents = [...new Set(parents.flatMap(parent => descendants(parent).filter(el => matches(el, part))))];
+    return parents;
+  }
+  function removeIds(root) {
+    for (const el of descendants(root)) if (el.id && byId.get(el.id) === el) byId.delete(el.id);
+  }
   function element(tag, attributes = {}) {
     const classes = new Set((attributes.class || '').split(/\s+/).filter(Boolean));
-    let markup = '';
-    let value = attributes.value || '';
+    let markup = '', value = attributes.value ?? '', valueSet = 'value' in attributes, content = '';
+    const listeners = new Map();
     const el = {
-      tagName: tag.toUpperCase(),
-      id: attributes.id,
+      tagName: tag.toUpperCase(), id: attributes.id, children: [], parentElement: null,
       dataset: Object.fromEntries(Object.entries(attributes)
         .filter(([key]) => key.startsWith('data-'))
         .map(([key, val]) => [key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase()), val])),
-      textContent: '',
-      hidden: 'hidden' in attributes,
-      disabled: 'disabled' in attributes,
+      hidden: 'hidden' in attributes, disabled: 'disabled' in attributes,
+      checked: 'checked' in attributes, selected: 'selected' in attributes, clientWidth: 1040,
       classList: {
         contains: name => classes.has(name),
         toggle(name, force) {
@@ -50,48 +67,73 @@ function createDocument() {
         },
       },
       getAttribute: name => attributes[name] ?? null,
-      setAttribute: (name, value) => { attributes[name] = String(value); },
-      click() {
-        return this.onclick?.({ target: this, preventDefault() {} });
+      setAttribute: (name, next) => { attributes[name] = String(next); },
+      removeAttribute: name => { delete attributes[name]; },
+      querySelectorAll(selector) { return query(this, selector); },
+      querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; },
+      addEventListener(type, listener) { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(listener); },
+      dispatchEvent(event) {
+        event.target ??= this; event.currentTarget = this; event.preventDefault ??= () => {};
+        this[`on${event.type}`]?.(event);
+        for (const listener of listeners.get(event.type) ?? []) listener(event);
+        if (event.bubbles !== false) this.parentElement?.dispatchEvent?.(event);
+        return true;
       },
-      get value() { return value; },
-      set value(next) { value = String(next); },
+      click() { return this.dispatchEvent({ type: 'click', target: this }); },
+      get options() { return this.querySelectorAll('option'); },
+      get value() {
+        if (this.tagName === 'SELECT' && !valueSet) return (this.options.find(option => option.selected) ?? this.options[0])?.value ?? '';
+        return this.tagName === 'OPTION' && !valueSet ? this.textContent : value;
+      },
+      set value(next) { value = String(next); valueSet = true; },
+      get textContent() { return content + this.children.map(child => child.textContent).join(''); },
+      appendParsedText(next) { content += next; },
+      set textContent(next) { removeIds(this); this.children = []; content = String(next); markup = content; },
+      set outerHTML(next) {
+        const parent = this.parentElement;
+        assert.ok(parent, 'outerHTML replacement requires an attached node');
+        const index = parent.children.indexOf(this);
+        removeIds(this); if (this.id) byId.delete(this.id);
+        const replacements = parse(String(next), parent);
+        parent.children.splice(index, 1, ...replacements);
+      },
       get innerHTML() { return markup; },
       set innerHTML(next) {
-        markup = String(next);
-        groups.set(el, parse(markup));
+        removeIds(this); markup = String(next); this.children = parse(markup, this);
+        if (this.tagName === 'SELECT') valueSet = false;
       },
     };
     if (el.id) byId.set(el.id, el);
     return el;
   }
-
-  function parse(markup) {
-    const found = [];
-    for (const match of markup.matchAll(/<([a-z][\w-]*)\b([^>]*)>/gi)) {
+  function parse(markup, parent) {
+    const container = { children: [], parentElement: parent }, stack = [container];
+    let previousEnd = 0;
+    for (const match of markup.matchAll(/<\/?([a-z][\w-]*)\b([^>]*)>/gi)) {
+      stack.at(-1).appendParsedText?.(markup.slice(previousEnd, match.index));
+      previousEnd = match.index + match[0].length;
+      const tag = match[1].toLowerCase();
+      if (match[0].startsWith('</')) {
+        const index = stack.findLastIndex(el => el.tagName?.toLowerCase() === tag);
+        if (index > 0) stack.length = index;
+        continue;
+      }
       const attrs = Object.fromEntries([...match[2].matchAll(/([\w:-]+)(?:="([^"]*)"|'([^']*)')?/g)]
         .map(part => [part[1], part[2] ?? part[3] ?? '']));
-      if (attrs.id || attrs.class || Object.keys(attrs).some(key => key.startsWith('data-'))) {
-        found.push(element(match[1], attrs));
-      }
+      const el = element(tag, attrs), current = stack.at(-1);
+      el.parentElement = current === container ? parent : current;
+      current.children.push(el);
+      if (!voidTags.has(tag) && !match[0].endsWith('/>')) stack.push(el);
     }
-    return found;
+    return container.children;
   }
-
-  roots.push(...parse(html));
-  byId.get('coverage').value = '.9';
-  const all = () => [...roots, ...groups.values()].flat();
-  const querySelectorAll = selector => all().filter(el => {
-    if (selector.startsWith('.')) return el.classList.contains(selector.slice(1));
-    const match = selector.match(/^\[data-([\w-]+)(?:=([^\]]+))?\]$/);
-    assert.ok(match, `Unsupported DOM-stub selector: ${selector}`);
-    const key = match[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    return key in el.dataset && (match[2] === undefined || el.dataset[key] === match[2]);
-  });
+  const root = { children: [] };
+  root.children = parse(html, root);
   return {
-    getElementById(id) { return byId.get(id) || null; },
-    querySelectorAll,
-    querySelector: selector => querySelectorAll(selector)[0] || null,
+    getElementById: id => byId.get(id) ?? null,
+    querySelectorAll: selector => query(root, selector),
+    querySelector: selector => query(root, selector)[0] ?? null,
+    createElement: tag => element(tag),
   };
 }
 
@@ -101,12 +143,14 @@ async function boot(raw) {
   const run = new AsyncFunction(
     'covariance', 'stats', 'optimize', 'validateInputs', 'demoData', 'normalizeFxHedge', 'renderHedgeMarkup', 'renderRiskMarkup',
     'defaultPolicy', 'validatePolicy', 'satisfiesPolicy', 'optimizeAllocation', 'samplePortfolios', 'initDataInfoUI', 'frontierTarget',
+    'mountHedgeLab', 'mountFxConsensus', 'mountFxModel',
     'document', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
-    `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen,frontierComparison}), dataInfoUI };`,
+    `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen,frontierComparison}), dataInfoUI, hedgeLab, fxConsensus, fxModelUI };`,
   );
   const app = await run(
     covariance, stats, optimize, validateInputs, demoData, normalizeFxHedge, renderHedgeMarkup, renderRiskMarkup,
     defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios, initDataInfoUI, frontierTarget,
+    mountHedgeLab, mountFxConsensus, mountFxModel,
     document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
     async () => ({ ok: true, json: async () => structuredClone(raw) }),
     () => 1, () => {},
@@ -122,7 +166,13 @@ async function boot(raw) {
     await get('importFile').onchange({ target });
     assert.equal(target.value, '');
   };
-  return { ...app, document, get, cache, importData };
+  const importMarket = async candidate => {
+    const content = JSON.stringify(candidate);
+    const target = { files: [{ size: Buffer.byteLength(content), text: async () => content }], value: 'market.json' };
+    await get('dataInfoImportFile').onchange({ target });
+    assert.equal(target.value, '');
+  };
+  return { ...app, document, get, cache, importData, importMarket };
 }
 
 const datasets = [['demo', demoData]];
@@ -158,6 +208,15 @@ test('risk selection stays synchronized with portfolio cards and model navigatio
   assert.equal(app.get('hedge').hidden, true);
   assert.equal(app.get('overview').hidden, true);
   assert.equal(app.get('pageTitle').innerHTML, '환율모형');
+  for (const tab of ['modelA', 'modelB', 'consensus']) {
+    const button = app.document.querySelectorAll('[data-fx-tab]').find(b => b.dataset.fxTab === tab);
+    button.click();
+    assert.equal(button.getAttribute('aria-pressed'), 'true');
+    for (const panel of app.document.querySelectorAll('.fx-panel')) assert.equal(panel.hidden, panel.id !== `fx-${tab}`);
+    assert.equal(app.get('fxmodel').hidden, false);
+    assert.equal(app.get('hedge').hidden, true);
+    assert.equal(app.get('hedge-monitor').hidden, false, 'FX selection must not change the selected Hedge panel');
+  }
   nav('overview').click();
   assert.equal(app.get('fxmodel').hidden, true);
   assert.equal(app.document.querySelector('.heading-actions'), null);
@@ -564,3 +623,159 @@ test('invalid frontier ranges leave the last valid chart intact; either axis can
   app.get('frontierAxisReset').click();
   assert.equal(app.get('frontierChart').innerHTML,previous);
 });
+
+// Deliberately generated values: no uploaded workbook observations are retained.
+function analyticsFixture() {
+  const end = Date.UTC(2026, 9, 15), day = 86400000;
+  const date = offset => new Date(end + offset * day).toISOString().slice(0, 10);
+  const history = Array.from({length: 50}, (_, i) => {
+    const premium = -2 + i / 100;
+    return {date: date(i - 49), spot: 1200 * Math.exp(i / 1000 + (i % 2) / 200), hedge3m: premium - 1, hedge6m: premium, hedge12m: premium + 1, hedgeMean: premium};
+  });
+  const last = history.at(-1);
+  const usdRates = history.map((row, i) => ({date: row.date,
+    krPr: 2.5 + i / 1000, usPr: 4, kr3m: 2.6 + i / 100, us3m: 4,
+    kr1y: 2.7 + i / 100, us1y: 4, kr2y: 2.8 + i / 100, us2y: 4, kr3y: 2.9 + i / 100, us3y: 4,
+  }));
+  return {
+    kind: 'bje_data_info', schemaVersion: 1,
+    meta: {source: 'SYNTHETIC INTEGRATION ONLY', asOf: '2026-10-16', latestObservation: date(0), sha256: 'b'.repeat(64), units: {hedge: 'source_value'}},
+    market: {rates: [{id: 'synthetic-3m', label: 'Synthetic rate', value: 3, previous: 2.9, change: .1, unit: '%', asOf: date(0), previousDate: date(-1), source: 'Synthetic column'}], risk: [], fx: []},
+    bond: null,
+    fxHedge: {unit: 'source_value', source: 'SYNTHETIC', pairs: [{currency: 'USDKRW', asOf: date(0), hedge3m: last.hedge3m, hedge6m: last.hedge6m, hedge12m: last.hedge12m, fxVol: 10, volAsOf: date(0), history: history.map(row => ({date: row.date, value: row.hedgeMean}))}]},
+    hedgeFx: {schemaVersion: 1, source: 'SYNTHETIC', asOf: date(0), unit: 'source_value', unitVerified: false,
+      pairs: [{currency: 'USDKRW', asOf: date(0), spotUnit: '원/달러', source: 'Synthetic premium', spotSource: 'Synthetic midpoint', history}], usdRates},
+    fxModel: {schemaVersion: 1, pair: 'USDKRW',
+      meta: {asOf: date(0), source: 'SYNTHETIC MARKOV', n: 49, start: date(-49), end: date(0)},
+      history: history.map(row => ({date: row.date, spot: row.spot, probs: [.5, .3, .2]})),
+      forecast: Array.from({length: 63}, (_, i) => ({date: date(i + 1), mean: last.spot + i, median: last.spot + i,
+        lower68: last.spot + i - 10, upper68: last.spot + i + 10,
+        lower90: last.spot + i - 20, upper90: last.spot + i + 20,
+        lower95: last.spot + i - 30, upper95: last.spot + i + 30, sigmaLog: .02, probs: [.4, .3, .3]})),
+      model: {currentProbs: [.5, .3, .2], transition: [[.9, .05, .05], [.1, .8, .1], [.05, .05, .9]],
+        regimes: [{label: 'Low', meanDailyPct: 0, volDailyPct: .1, persistence: .9}, {label: 'Middle', meanDailyPct: .1, volDailyPct: .2, persistence: .8}, {label: 'High', meanDailyPct: -.1, volDailyPct: .3, persistence: .9}]},
+      validation: {summary: 'Synthetic integration only'},
+    },
+  };
+}
+
+const analyticsViewIds = ['marketSnapshot', 'hedgeGrid', 'hedgeHistograms', 'hlModelAContent', 'hlScenarioResults', 'hlHistoryContent', 'fxConsensusChart', 'fxConsensusTable', 'fxBenchmarkChart', 'fxModelChart', 'fxModelRegimes'];
+const analyticsViews = app => Object.fromEntries(analyticsViewIds.map(id => [id, app.get(id).innerHTML]));
+
+test('combined market import validates both analytics extensions before changing any active view', async () => {
+  const app = await boot(demoData), portfolio = app.snapshot(), raw = analyticsFixture();
+  await app.importMarket(raw);
+  assert.equal(app.get('dataInfoError').hidden, true);
+  assert.equal(app.hedgeLab.getSnapshot().pairs[0].history.length, 50);
+  assert.equal(app.fxConsensus.getSnapshot().pairs[0].history.length, 50);
+  assert.equal(app.fxModelUI.getSnapshot().forecast.length, 63);
+  assert.equal(app.get('fxModelHorizon').value, '3', 'Short snapshots choose an available horizon');
+  assert.equal(app.get('fxModelHorizon').options.find(option => option.value === '12').disabled, true);
+  for (const id of ['hlHistoryContent', 'fxConsensusChart', 'fxBenchmarkChart', 'fxModelChart']) assert.match(app.get(id).innerHTML, /<svg/);
+  assert.deepEqual(app.snapshot(), portfolio, 'Market analytics must not replace portfolio assumptions');
+  const before = {views: analyticsViews(app), info: app.dataInfoUI.getSnapshot(), hedge: app.hedgeLab.getSnapshot(), consensus: app.fxConsensus.getSnapshot(), model: app.fxModelUI.getSnapshot()};
+  for (const corrupt of [
+    value => { value.fxModel.forecast[0].probs = [1, 1, 1]; },
+    value => { value.hedgeFx.pairs[0].history[0].hedgeMean = 100; },
+    value => { value.hedgeFx.asOf = '2026-10-17'; },
+  ]) {
+    const invalid = structuredClone(raw);
+    invalid.meta.source = 'MUST NOT BE INSTALLED';
+    invalid.market.rates[0].label = 'Rejected replacement';
+    invalid.hedgeFx.source = 'Rejected Hedge source';
+    invalid.fxModel.meta.source = 'Rejected model source';
+    corrupt(invalid);
+    await app.importMarket(invalid);
+    assert.equal(app.get('dataInfoError').hidden, false);
+    assert.equal(app.dataInfoUI.getSnapshot(), before.info);
+    assert.equal(app.hedgeLab.getSnapshot(), before.hedge);
+    assert.equal(app.fxConsensus.getSnapshot(), before.consensus);
+    assert.equal(app.fxModelUI.getSnapshot(), before.model);
+    assert.deepEqual(analyticsViews(app), before.views);
+    assert.deepEqual(app.snapshot(), portfolio);
+  }
+  await app.importMarket(raw);
+  assert.equal(app.get('dataInfoError').hidden, true, 'A valid retry recovers from the import error');
+});
+
+test('real Hedge unit controls synchronize A/B and new snapshots reset assumptions; legacy imports clear all analytics', async () => {
+  const app = await boot(demoData), raw = analyticsFixture();
+  await app.importMarket(raw);
+  const initial = app.get('hlModelAContent').innerHTML;
+  assert.equal(app.get('hlAUnit').value, '');
+  assert.equal(app.get('hlBUnit').value, '');
+  app.get('hlAUnit').value = 'annual_percent';
+  app.get('hlAUnit').dispatchEvent({type: 'change'});
+  assert.equal(app.get('hlBUnit').value, 'annual_percent');
+  assert.notEqual(app.get('hlModelAContent').innerHTML, initial);
+  assert.equal(app.get('hlVolFx').value, '', 'A short source sample must not invent FX volatility');
+  assert.equal(app.get('hlScenarioError').hidden, false);
+  app.get('hlVolFx').value = '10';
+  app.get('hlVolFx').dispatchEvent({type: 'change'});
+  assert.equal(app.get('hlScenarioError').hidden, true);
+  assert.equal(app.get('hlVolFxStatus').textContent, '직접입력');
+  assert.match(app.get('hlScenarioResults').innerHTML, /-1\.51%/);
+  app.get('hlBUnit').value = '';
+  app.get('hlBUnit').dispatchEvent({type: 'change'});
+  assert.equal(app.get('hlAUnit').value, '');
+  assert.equal(app.get('hlModelAContent').innerHTML, initial);
+  app.get('hlBUnit').value = 'annual_percent';
+  app.get('hlBUnit').dispatchEvent({type: 'change'});
+  await app.importMarket(raw);
+  assert.equal(app.get('hlAUnit').value, '', 'A source replacement must not carry forward an unverified unit assumption');
+  assert.equal(app.get('hlBUnit').value, '');
+
+  const inputs = app.get('fxConsensusInputs').querySelectorAll('[data-quarter]');
+  const quarter = inputs[0].dataset.quarter;
+  for (const [provider, value] of [[0, 1300], [1, 1400]]) {
+    const input = inputs.find(el => el.dataset.quarter === quarter && Number(el.dataset.provider) === provider);
+    input.value = value; input.dispatchEvent({type: 'change'});
+  }
+  assert.match(app.get('fxConsensusTable').innerHTML, /1,350/);
+  assert.deepEqual(app.fxConsensus.getConsensus().estimates.USDKRW[quarter].slice(0, 2), [1300, 1400]);
+  app.get('fxModelTableButton').click();
+  assert.equal(app.get('fxModelTable').hidden, false);
+
+  const legacy = structuredClone(raw); delete legacy.hedgeFx; delete legacy.fxModel;
+  await app.importMarket(legacy);
+  assert.equal(app.get('dataInfoError').hidden, true);
+  assert.equal(app.dataInfoUI.getSnapshot().hedgeFx, null);
+  assert.equal(app.dataInfoUI.getSnapshot().fxModel, null);
+  assert.deepEqual(app.hedgeLab.getSnapshot().pairs, []);
+  assert.deepEqual(app.fxConsensus.getSnapshot().pairs, []);
+  assert.equal(app.fxModelUI.getSnapshot(), null);
+  for (const id of ['hlHistoryContent', 'fxConsensusChart', 'fxBenchmarkChart', 'fxModelChart']) assert.doesNotMatch(app.get(id).innerHTML, /<svg/);
+  assert.equal(app.get('fxConsensusCSV').disabled, true);
+  assert.equal(app.get('fxModelCSV').disabled, true);
+  assert.equal(app.get('fxModelDetails').hidden, true);
+  assert.equal(app.get('fxModelTable').hidden, true);
+  assert.equal(app.get('fxModelTable').innerHTML, '');
+  assert.match(app.get('hedgeGrid').innerHTML, /-1\.51/);
+  assert.match(app.get('marketSnapshot').innerHTML, /Synthetic rate/);
+});
+
+if (process.env.BJE_TEST_INFO) {
+  test('external combined market snapshot loads through the actual app analytics controls', async () => {
+    const raw = JSON.parse(await fs.readFile(process.env.BJE_TEST_INFO, 'utf8'));
+    const app = await boot(demoData), portfolio = app.snapshot();
+    await app.importMarket(raw);
+    assert.equal(app.get('dataInfoError').hidden, true, app.get('dataInfoError').textContent);
+    assert.equal(app.hedgeLab.getSnapshot().asOf, raw.hedgeFx.asOf);
+    assert.equal(app.fxConsensus.getSnapshot().pairs.length, raw.hedgeFx.pairs.length);
+    assert.equal(app.fxModelUI.getSnapshot().meta.asOf, raw.fxModel.meta.asOf);
+    assert.deepEqual(app.snapshot(), portfolio);
+    for (const id of ['hlModelAContent', 'hlScenarioResults', 'hlHistoryContent', 'fxConsensusChart', 'fxBenchmarkChart', 'fxModelChart']) {
+      assert.match(app.get(id).innerHTML, /<svg/);
+      assert.doesNotMatch(app.get(id).innerHTML, /NaN|Infinity|undefined/);
+    }
+    for (const currency of ['USDKRW', 'JPYKRW', 'AUDKRW', 'EURKRW']) {
+      for (const id of ['fxConsensusCurrency', 'fxBenchmarkCurrency', 'hlCurrency']) {
+        app.get(id).value = currency; app.get(id).dispatchEvent({type: 'change'});
+      }
+      assert.equal(app.get('fxConsensusCSV').disabled, false);
+      assert.equal(app.get('hlScenarioError').hidden, true);
+      assert.match(app.get('fxConsensusChart').innerHTML, new RegExp(currency));
+      assert.match(app.get('fxBenchmarkChart').innerHTML, new RegExp(currency));
+    }
+  });
+}

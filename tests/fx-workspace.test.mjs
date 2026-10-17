@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normalizeFxAnalyticsSpots,selectFxSpotWindow,fxSpotStatistics,renderFxSpotChart,fxSpotCSV,mountFxWorkspace} from '../dist/fx-workspace.mjs';
+import {normalizeFxAnalyticsSpots,selectFxSpotWindow,fxSpotStatistics,renderFxSpotChart,selectFxRelativeSeries,selectFxRollingVolatility,renderFxMonitorChart,fxSpotCSV,mountFxWorkspace} from '../dist/fx-workspace.mjs';
 
 function weekdayHistory(start='2023-01-02',count=600){
   const rows=[];let t=Date.parse(start+'T00:00:00Z'),value=100;
@@ -70,4 +70,58 @@ test('mounted FX workspace selects tabs/quotes/windows, keeps valid data after b
 
 test('partial spot snapshots leave missing currencies unavailable and safely reset on null',()=>{
   const doc=tinyDocument(),viewer=mountFxWorkspace(doc),raw=fixture();raw.spots=raw.spots.slice(0,1);viewer.installAnalytics(raw);doc.getElementById('fxSpotCard-dxy').onclick();assert.equal(doc.getElementById('fxSpotCSV').disabled,true);assert.match(doc.getElementById('fxSpotChart').innerHTML,/데이터 없음/);viewer.installAnalytics(null);assert.equal(viewer.getAnalytics(),null);assert.equal(mountFxWorkspace({getElementById(){return null;}}),null);
+});
+
+test('relative performance uses shared dates, base values, and common endpoint across available currencies',()=>{
+  const raw=fixture();raw.spots=raw.spots.slice(0,2);raw.spots[0].history=raw.spots[0].history.slice(0,-6);raw.spots[1].history=raw.spots[1].history.slice(20).filter((_,i)=>i!==100).map(row=>({...row,value:row.value*2}));
+  const snapshot=normalizeFxAnalyticsSpots(raw),series=selectFxRelativeSeries(snapshot,1);
+  assert.equal(series.length,2);assert.deepEqual(series[0].rows.map(r=>r.date),series[1].rows.map(r=>r.date));
+  assert.equal(series[0].rows.at(-1).date,raw.spots[0].history.at(-1).date);
+  for(const item of series){assert.equal(item.rows[0].value,100);assert.equal(item.rows[0].baseDate,series[0].rows[0].date);}
+  assert.deepEqual(series[0].rows.map(r=>r.value),series[1].rows.map(r=>r.value));
+  const cutoff=new Date(raw.spots[0].history.at(-1).date+'T00:00:00Z');cutoff.setUTCFullYear(cutoff.getUTCFullYear()-1);assert.ok(series[0].rows[0].date>=cutoff.toISOString().slice(0,10));
+  const csv=fxSpotCSV(snapshot,'dxy',1,'relative').split('\r\n');assert.equal(csv.length,1+series[0].rows.length*2);assert.match(csv[0],/source_value,source_unit,base_value,base_date$/);
+  assert.equal(Number(csv[1].split(',')[3]),100);assert.equal(Number(csv[1].split(',')[4]),series[0].rows[0].sourceValue);
+  const disjoint={spots:[{...snapshot.spots[0],history:snapshot.spots[0].history.slice(0,1)},{...snapshot.spots[1],history:snapshot.spots[1].history.slice(-1)}]};
+  assert.ok(selectFxRelativeSeries(disjoint,0).every(item=>!item.rows.length));assert.match(renderFxMonitorChart(disjoint,'usdkrw',0,'relative'),/공통 관측일 없음/);assert.equal(fxSpotCSV(disjoint,'usdkrw',0,'relative'),'');
+});
+
+test('rolling volatility matches analytical alternating-return sample variance for 21 and 63 observations',()=>{
+  const spot=normalizeFxAnalyticsSpots(fixture()).spots[0];
+  for(const size of [21,63]){
+    const rows=selectFxRollingVolatility(spot,0,size);assert.equal(rows.length,spot.history.length);assert.equal(rows[size-1].value,null);
+    const expected=.01*Math.sqrt((size+1)/size*252)*100;
+    assert.ok(Math.abs(rows[size].value-expected)<1e-11);assert.equal(rows[size].observations,size);assert.equal(rows[size].startDate,spot.history[0].date);
+    const selected=selectFxRollingVolatility(spot,1,size);assert.notEqual(selected[0].value,null);assert.equal(selected[0].observations,size);assert.ok(selected[0].startDate<selected[0].date);
+  }
+  const flat={...spot,history:spot.history.map(row=>({...row,value:100}))};assert.equal(selectFxRollingVolatility(flat,0,63)[63].value,0);
+});
+
+test('rolling windows accept holidays, ignore weekend quotes, and restart only after gaps over ten days',()=>{
+  const history=weekdayHistory('2023-01-02',30),first={id:'usdkrw',history};assert.equal(history.at(-1).date,'2023-02-10');
+  const tenDay={...first,history:[...history,...weekdayHistory('2023-02-20',30)]},elevenDay={...first,history:[...history,...weekdayHistory('2023-02-21',30)]};
+  assert.equal(selectFxRollingVolatility(tenDay,0,21)[30].observations,21);assert.notEqual(selectFxRollingVolatility(tenDay,0,21)[30].value,null);
+  const restarted=selectFxRollingVolatility(elevenDay,0,21);assert.equal(restarted[30].observations,0);assert.equal(restarted[30].value,null);assert.equal(restarted[50].value,null);assert.notEqual(restarted[51].value,null);assert.equal(restarted[51].startDate,'2023-02-21');
+  const weekend={...first,history:[...history,{date:'2023-01-07',value:900},{date:'2023-01-08',value:1}].sort((a,b)=>a.date.localeCompare(b.date))};
+  assert.deepEqual(selectFxRollingVolatility(weekend,0,21),selectFxRollingVolatility(first,0,21));
+  const holiday={...first,history:history.filter(row=>row.date!=='2023-01-18')};assert.notEqual(selectFxRollingVolatility(holiday,0,21)[21].value,null);
+  const snapshot={spots:[{...elevenDay,label:'USD/KRW',unit:'원/달러'}]},csv=fxSpotCSV(snapshot,'usdkrw',0,'volatility',21).split('\r\n');
+  assert.match(csv[0],/start_date,end_date,return_observations,window_observations$/);assert.match(csv[31],/2023-02-21,usdkrw,연율 %,,2023-02-21,2023-02-21,0,21$/);
+  assert.equal(Number(csv[52].split(',')[3]),restarted[51].value);
+  const chart=renderFxMonitorChart(snapshot,'usdkrw',0,'volatility',21,360);assert.equal([...chart.matchAll(/<path /g)].length,2);assert.doesNotMatch(chart,/NaN|Infinity|undefined/);
+});
+
+test('comparison and volatility charts handle single dates, long histories, and safe labels',()=>{
+  const history=weekdayHistory('1990-01-01',9000),snapshot={spots:[{id:'usdkrw',label:'<img src=x>',unit:'원/달러',history},{id:'dxy',label:'DXY',unit:'지수',history}]};
+  for(const view of ['relative','volatility']){const chart=renderFxMonitorChart(snapshot,'usdkrw',0,view,63,360);assert.match(chart,/viewBox="0 0 360 320"/);assert.doesNotMatch(chart,/<img|NaN|Infinity|undefined/);assert.ok(chart.length<130000);}
+  const single={spots:snapshot.spots.map(spot=>({...spot,history:history.slice(-1)}))};assert.doesNotMatch(renderFxMonitorChart(single,'usdkrw',0,'relative'),/NaN|Infinity|undefined/);assert.match(renderFxMonitorChart(single,'usdkrw',0,'volatility'),/변동성 표본 부족/);
+});
+
+test('view and volatility controls update units, common coverage, exports, and preserve native defaults',()=>{
+  const doc=tinyDocument(),viewer=mountFxWorkspace(doc),get=id=>doc.getElementById(id);viewer.installAnalytics(fixture());
+  assert.equal(get('fxSpotView').value,'spot');assert.equal(get('fxSpotVolatilityControl').hidden,true);assert.equal(get('fxSpotCurrencyControl').hidden,false);
+  get('fxSpotView').onchange({target:{value:'relative'}});assert.equal(get('fxSpotChartHeading').textContent,'상대성과');assert.equal(get('fxSpotChartUnit').textContent,'시작=100');assert.equal(get('fxSpotCurrencyControl').hidden,true);assert.match(get('fxSpotCount').textContent,/5개 통화/);assert.match(get('fxSpotChart').innerHTML,/fx-spot-legend/);
+  get('fxSpotView').onchange({target:{value:'volatility'}});get('fxSpotVolatilityWindow').onchange({target:{value:'63'}});assert.equal(get('fxSpotVolatilityControl').hidden,false);assert.equal(get('fxSpotCurrencyControl').hidden,false);assert.equal(get('fxSpotChartUnit').textContent,'연율 %');assert.match(get('fxSpotChartHeading').textContent,/σ \(63\)/);assert.match(get('fxSpotCount').textContent,/n=63/);
+  get('fxSpotView').onchange({target:{value:'spot'}});assert.equal(get('fxSpotChartHeading').textContent,'USD/KRW');assert.equal(get('fxSpotChartUnit').textContent,'원');assert.equal(get('fxSpotVolatilityControl').hidden,true);
+  viewer.clear();assert.equal(get('fxSpotCSV').disabled,true);assert.equal(get('fxSpotCount').textContent,'');
 });

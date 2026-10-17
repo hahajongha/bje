@@ -36,6 +36,22 @@ export function normalizeFxHedge(raw) {
       if (!row || !validDate(row.date) || row.date > pair.asOf || (i && row.date <= pair.history[i-1].date) || !Number.isFinite(row.value)) throw Error(`${pair.currency} 과거 관측값·날짜 순서를 확인하십시오.`);
       return {date:row.date, value:row.value};
     });
+    if (pair.tenorHistory != null && (!Array.isArray(pair.tenorHistory) || pair.tenorHistory.length > 30000)) throw Error(`${pair.currency} 만기별 과거 관측값 배열을 확인하십시오.`);
+    const averageByDate = new Map(next.history.map(row => [row.date, row.value]));
+    next.tenorHistory = (pair.tenorHistory ?? []).map((row, i) => {
+      if (!row || !validDate(row.date) || row.date > pair.asOf || (i && row.date <= pair.tenorHistory[i-1].date)) throw Error(`${pair.currency} 만기별 과거 관측일 순서를 확인하십시오.`);
+      const result = {date:row.date};
+      for (const key of ['hedge3m', 'hedge6m', 'hedge12m']) {
+        if (row[key] != null && !Number.isFinite(row[key])) throw Error(`${pair.currency} 만기별 과거 프리미엄을 확인하십시오.`);
+        result[key] = row[key] ?? null;
+        if (row.date === next.asOf && ((result[key] == null) !== (next[key] == null) || (result[key] != null && Math.abs(result[key] - next[key]) > 1e-8 * Math.max(1, Math.abs(next[key]))))) throw Error(`${pair.currency} 최신 프리미엄과 만기별 시계열이 일치하지 않습니다.`);
+      }
+      const values = [result.hedge3m, result.hedge6m, result.hedge12m];
+      if (!values.some(Number.isFinite)) throw Error(`${pair.currency} 만기별 과거 관측값이 모두 비어 있습니다.`);
+      const average = averageByDate.get(row.date);
+      if (average != null && (!values.every(Number.isFinite) || Math.abs(average - values.reduce((sum, value) => sum + value/3, 0)) > 1e-8 * Math.max(1, Math.abs(average)))) throw Error(`${pair.currency} 평균·만기별 과거 시계열이 일치하지 않습니다.`);
+      return result;
+    });
     const latest = next.history.at(-1);
     const tenors = [next.hedge3m, next.hedge6m, next.hedge12m];
     if (latest?.date === next.asOf && (!tenors.every(Number.isFinite) || Math.abs(latest.value - tenors.reduce((sum,value) => sum + value/3, 0)) > 1e-8 * Math.max(1, Math.abs(latest.value)))) throw Error(`${pair.currency} 최신 프리미엄과 평균 시계열이 일치하지 않습니다.`);

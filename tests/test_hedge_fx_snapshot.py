@@ -5,7 +5,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from build_info_snapshot import HEADERS, build_fx_analytics
+from build_info_snapshot import HEADERS, build_fx_analytics, build_hedge
 from build_hedge_fx_snapshot import model_input
 
 
@@ -14,6 +14,18 @@ def values(**updates):
 
 
 class TestHedgeFxAnalytics(unittest.TestCase):
+    def test_individual_tenors_preserve_partial_rows_without_changing_complete_average(self):
+        rows = [(date(2014, 12, 31), values(HW=-1, HX=-2, HY=-3)),
+                (date(2026, 10, 12), values(HW=-1, HX=0, HY=1)),
+                (date(2026, 10, 13), values(HW=None, HX=None, HY=None)),
+                (date(2026, 10, 14), values(HW=-2, HX=None, HY=0))]
+        pair = build_hedge(rows)['pairs'][0]
+        self.assertEqual(pair['asOf'], '2026-10-14')
+        self.assertEqual(pair['history'], [{'date': '2026-10-12', 'value': 0}])
+        self.assertEqual(pair['tenorHistory'], [
+            {'date': '2026-10-12', 'hedge3m': -1, 'hedge6m': 0, 'hedge12m': 1},
+            {'date': '2026-10-14', 'hedge3m': -2, 'hedge6m': None, 'hedge12m': 0}])
+
     def test_rates_keep_signs_exact_dates_complete_average_and_no_unit_assumption(self):
         common = {'Q': 2.5, 'AT': 4, 'B': 2.4, 'AE': 3.9, 'E': 2.3, 'AG': 3.8,
                   'G': 2.2, 'AH': 3.7, 'I': 2.1, 'AI': 3.6, 'HW': -3, 'HX': 0, 'HY': 3}

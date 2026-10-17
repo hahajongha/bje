@@ -179,6 +179,12 @@ def expected_hedge(records):
         pair['history'] = [{'date': day.isoformat(), 'value': math.fsum(row[column] for column in columns) / 3}
                            for day, row in records.items() if day >= date(2015, 1, 1)
                            and all(finite(row[column]) for column in columns)]
+        pair['tenorHistory'] = [
+            dict(date=day.isoformat(), hedge3m=row[columns[0]],
+                 hedge6m=row[columns[1]], hedge12m=row[columns[2]])
+            for day, row in records.items() if day >= date(2015, 1, 1)
+            and any(finite(row[column]) for column in columns)
+        ]
         pair['fxVol'], pair['volAsOf'], pair['volPeriod'] = None, None, None
         if len(weekdays) >= 253:
             window = weekdays[-253:]
@@ -318,6 +324,11 @@ def main():
         cutoff = date.fromisoformat(actual['meta']['asOf'])
         records = read_xml(info, cutoff)
         hedge, scaling_error = expected_hedge(records)
+        # The extension is optional for historical v1 snapshots.
+        for pair in hedge['pairs']:
+            supplied = next((p for p in actual['fxHedge']['pairs'] if p['currency'] == pair['currency']), {})
+            if 'tenorHistory' not in supplied:
+                pair.pop('tenorHistory')
         bond, identity_error = expected_bond(records, cutoff)
         latest = max(day for day, row in records.items() if any(finite(value) for value in row.values()))
         expected = {'kind': 'bje_data_info', 'schemaVersion': 1,

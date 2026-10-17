@@ -186,11 +186,18 @@ def build_hedge(rows):
         observed, latest = available[-1]
         history = [{'date': d.isoformat(), 'value': mean(values[c] for c in columns)}
                    for d, values in rows if d >= date(2015, 1, 1) and all(values[c] is not None for c in columns)]
+        tenor_history = [
+            {'date': d.isoformat(), **{key: values[c] for key, c in
+                                      zip(('hedge3m', 'hedge6m', 'hedge12m'), columns)}}
+            for d, values in rows if d >= date(2015, 1, 1)
+            and any(values[c] is not None for c in columns)
+        ]
         vol, vol_as_of, vol_period = realized_volatility(rows, fx_column)
         pairs.append({'currency': currency, 'asOf': observed.isoformat() if observed else None,
                       **{key: latest.get(c) for key, c in zip(('hedge3m', 'hedge6m', 'hedge12m'), columns)},
                       'fxVol': vol, 'volAsOf': vol_as_of, 'volPeriod': vol_period, 'aggregation': 'snapshot',
-                      'source': f"DailyRate!{'/'.join(columns)}", 'history': history})
+                      'source': f"DailyRate!{'/'.join(columns)}", 'history': history,
+                      'tenorHistory': tenor_history})
     return {'unit': 'source_value', 'source': SOURCE, 'pairs': pairs}
 
 
@@ -314,6 +321,7 @@ def build_from_rows(info, as_of, rows, quality):
                                   'Metric changes are latest minus previous available observation; dates are retained.',
                                   'Hedge premium units are unspecified in the source headers; signed source values are unchanged.',
                                   'Hedge history: complete same-date 3M/6M/12M arithmetic averages since 2015-01-01.',
+                                  'Hedge tenorHistory: signed individual 3M/6M/12M premiums since 2015-01-01; partial dates retain nulls without filling.',
                                   'Hedge rate comparisons: same-date complete KR/US rates and HW/HX/HY mean; raw source premium units retained, no inferred CIP gap.',
                                   'FX monitoring: positive finite observed levels since 2015-01-01; source timestamps retained without filling or source blending.',
                                   'FX volatility: 252 log returns from the last 253 worksheet weekday dates; sample std × sqrt(252) × 100. Missing/nonpositive window quotes invalidate volatility.',

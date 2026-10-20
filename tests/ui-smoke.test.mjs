@@ -188,7 +188,7 @@ test('risk selection stays synchronized with portfolio cards and model navigatio
   assert.equal(app.get('fxmodel').hidden, false);
   assert.equal(app.get('hedge').hidden, true);
   assert.equal(app.get('overview').hidden, true);
-  assert.equal(app.get('pageTitle').innerHTML, '환율모형');
+  assert.equal(app.get('pageTitle').innerHTML, 'Currency');
   nav('overview').click();
   assert.equal(app.get('fxmodel').hidden, true);
   assert.equal(app.document.querySelector('.heading-actions'), null);

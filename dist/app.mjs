@@ -18,7 +18,7 @@ const fmt = (x,n=2) => Number.isFinite(x) ? x.toLocaleString('ko-KR',{minimumFra
 const esc = x => String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data, initial, state, results, cov, chosen='current', period=60, toastTimer, cacheKey, fxSnapshot=normalizeFxHedge(null), cloud=[], exploredIndex=0, selectedAssetIndex=null, frontierMode='same-risk', frontierComparison=null, frontierAxes={};
 const hedgeAnalytics=mountHedgeAnalytics(document),fxWorkspace=mountFxWorkspace(document);
-const dataInfoUI=initDataInfoUI({document,onHedge:next=>{fxSnapshot=next;renderHedge();},onAnalytics:next=>{hedgeAnalytics?.install(next);fxWorkspace?.installAnalytics(next);},onModel:next=>fxWorkspace?.installModel(next)});
+const dataInfoUI=initDataInfoUI({document,onHedge:next=>{fxSnapshot=next;renderHedge();},onAnalytics:next=>{hedgeAnalytics?.install(next);fxWorkspace?.installAnalytics(next);},onModel:(next,options)=>fxWorkspace?.installModel(next,options)});
 
 function normalizeData(raw) {
   if(!raw || !Array.isArray(raw.assets) || raw.assets.length<2 || raw.assets.length>8) throw Error('자산 수는 2~8개여야 합니다.');
@@ -314,7 +314,7 @@ function setTab(tab){
   if(!['overview','assumptions','risk','hedge','fxmodel'].includes(tab))tab='overview';
   document.querySelectorAll('.tab-panel').forEach(el=>el.hidden=el.id!==tab);
   document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
-  const titles={overview:'포트폴리오 대시보드<span>.</span>',assumptions:'Capital Market Assumption',risk:'리스크',hedge:'환헤지',fxmodel:'환율모형'};
+  const titles={overview:'포트폴리오 대시보드<span>.</span>',assumptions:'Capital Market Assumption',risk:'리스크',hedge:'환헤지',fxmodel:'Currency'};
   $('pageTitle').innerHTML=titles[tab];
   if(tab==='overview'){renderFrontier();renderHistory();}
 }

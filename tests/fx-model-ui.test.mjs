@@ -18,7 +18,7 @@ test('FX 21-day horizon truncation, SVG ranges, table endpoints, and escaping',(
   assert.match(renderFxTable(s,3),new RegExp(s.forecast[62].date));
 });
 test('CSV exports selected history and every requested daily forecast with fixed columns',()=>{
-  const s=normalizeFxModel(fixture()),csv=fxModelCSV(s,6,0),rows=csv.trim().split('\r\n').map(r=>r.split(','));assert.equal(rows.length,1+600+126);assert.equal(rows[0].length,15);rows.forEach(r=>assert.equal(r.length,15));assert.equal(rows.at(-1)[1],s.forecast[125].date);assert.equal(rows[1][0],'history');
+  const s=normalizeFxModel(fixture()),csv=fxModelCSV(s,6,0),rows=csv.trim().split('\r\n').map(r=>r.split(','));assert.equal(rows.length,1+600+126);assert.equal(rows[0].length,21);rows.forEach(r=>assert.equal(r.length,21));assert.equal(rows.at(-1)[1],s.forecast[125].date);assert.equal(rows[1][0],'history');
 });
 test('historical probability chart renders three bounded states and shares the selected history window',()=>{
   const raw=fixture();raw.model.regimes[0].label='<img onerror=alert(1)>';const s=normalizeFxModel(raw);
@@ -93,3 +93,26 @@ if(process.env.BJE_TEST_FX){
     const fs=await import('node:fs/promises'),raw=JSON.parse(await fs.readFile(process.env.BJE_TEST_FX,'utf8')),doc=tinyDocument(),viewer=mountFxModel(doc);viewer.install(raw);assert.equal(viewer.getSnapshot().pair,'USDKRW');assert.match(doc.getElementById('fxModelChart').innerHTML,/<svg/);assert.doesNotMatch(doc.getElementById('fxModelChart').innerHTML,/NaN|undefined/);assert.match(doc.getElementById('fxModelMethod').innerHTML,/1기간 OOS/);assert.match(doc.getElementById('fxModelSample').textContent,/환율관측/);
   });
 }
+
+test('MC viewer plots both empirical centers, exports current seed, and preserves prior results after a rejected rerun',async()=>{
+  const raw=fixture();raw.forecast=raw.forecast.slice(0,63);
+  const doc=tinyDocument(),viewer=mountFxModel(doc),get=id=>doc.getElementById(id);
+  viewer.install(raw);const first=viewer.getSnapshot();
+  assert.equal(first.simulation.paths,10000);assert.notEqual(first.forecast[0].mean,raw.forecast[0].mean);
+  assert.match(get('fxModelChart').innerHTML,/data-series="mean"/);assert.match(get('fxModelChart').innerHTML,/data-series="median"/);
+  get('fxModelCenter').onchange({target:{value:'median'}});
+  assert.doesNotMatch(get('fxModelChart').innerHTML,/data-series="mean"/);assert.match(get('fxModelChart').innerHTML,/data-series="median"/);
+  get('fxModelShowPaths').onclick();assert.equal((get('fxModelChart').innerHTML.match(/data-simulation-path/g)||[]).length,20);
+  get('fxModelPaths').value='2000';get('fxModelSeed').value='42';await get('fxModelRun').onclick();
+  const rerun=viewer.getSnapshot();assert.equal(rerun.simulation.seed,42);assert.equal(rerun.simulation.paths,2000);
+  assert.notDeepEqual(rerun.forecast,first.forecast);assert.equal(rerun.forecast.length,63);
+  const csv=fxModelCSV(rerun,3,0).trim().split('\r\n').at(-1).split(',');
+  assert.equal(Number(csv[3]),rerun.forecast.at(-1).mean);assert.equal(Number(csv[4]),rerun.forecast.at(-1).median);
+  assert.deepEqual(csv.slice(17,19),['2000','42']);
+  await get('fxModelRun').onclick();assert.deepEqual(viewer.getSnapshot().forecast,rerun.forecast);
+  const valid=viewer.getSnapshot(),chart=get('fxModelChart').innerHTML;
+  get('fxModelSeed').value='-1';await get('fxModelRun').onclick();
+  assert.equal(viewer.getSnapshot(),valid);assert.equal(get('fxModelChart').innerHTML,chart);assert.equal(get('fxModelError').hidden,false);
+  get('fxModelSeed').value='43';const pending=get('fxModelRun').onclick();viewer.clear();await pending;
+  assert.equal(viewer.getSnapshot(),null);assert.equal(get('fxModelRun').disabled,true);
+});

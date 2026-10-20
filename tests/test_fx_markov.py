@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -89,10 +90,54 @@ class TestMarkovModel(unittest.TestCase):
         forecast, diagnostics, _ = forecast_markov(fit, 1300, "2026-10-15", horizon=20, paths=60000, seed=31)
         self.assertLess(diagnostics["meanAgreementSE"], 5)
         self.assertLess(diagnostics["varianceAgreementSE"], 5)
+        self.assertLess(diagnostics["priceMeanAgreementSE"], 5)
+        self.assertFalse(diagnostics["meanPriceExact"])
         for row in forecast:
             values = [row[key] for key in ["lower95", "lower90", "lower68", "median", "upper68", "upper90", "upper95"]]
             self.assertEqual(sorted(values), values)
             self.assertAlmostEqual(sum(row["probs"]), 1, places=12)
+            self.assertLess(abs(row["mean"] - row["analyticMean"]), 5 * row["meanSE"])
+
+    def test_empirical_price_summary_not_geometric_or_analytic_mean(self):
+        # A prescribed log-price grid has a geometric-series closed-form price
+        # mean. It distinguishes arithmetic price averaging from exp(mean log)
+        # and from using the fitted model's theoretical expectation.
+        class GridRandom:
+            def choice(self, count, *, size, p):
+                return np.zeros(size, dtype=int)
+            def random(self, size):
+                return np.zeros(size)
+            def standard_normal(self, size):
+                return np.linspace(-0.5, 0.5, size)
+        n, spot = 1000, 1300.0
+        fit = MarkovFit(np.zeros(3), np.ones(3), np.eye(3), self.initial,
+                        self.initial[None, :], self.initial[None, :], 0, {})
+        with patch("fx_markov.np.random.default_rng", return_value=GridRandom()):
+            forecast, diagnostics, _ = forecast_markov(fit, spot, "2026-10-16", horizon=1, paths=n)
+        row = forecast[0]
+        step = 1 / (n - 1)
+        expected_mean = spot * math.exp(-0.5) * math.expm1(n * step) / (n * math.expm1(step))
+        self.assertAlmostEqual(row["mean"], expected_mean, places=10)
+        self.assertGreater(row["mean"], spot + 10)
+        self.assertNotAlmostEqual(row["mean"], row["analyticMean"], places=1)
+        # Quantiles interpolate the simulated price sample, not its logarithm.
+        expected_median = spot * (math.exp(-0.5 * step) + math.exp(0.5 * step)) / 2
+        self.assertAlmostEqual(row["median"], expected_median, places=10)
+        self.assertEqual(len(diagnostics["samplePaths"]), 20)
+        self.assertEqual(diagnostics["samplePaths"][0]["values"][0], spot)
+        self.assertAlmostEqual(diagnostics["samplePaths"][0]["values"][1], spot * math.exp(-0.5), places=10)
+
+    def test_reproducibility_and_sample_size_do_not_change_summaries(self):
+        fit = MarkovFit(self.mu, self.var, self.p, self.initial, self.initial[None, :], self.initial[None, :], 0, {})
+        first, diagnostics, _ = forecast_markov(fit, 1300, "2026-10-15", horizon=4, paths=2000, seed=31)
+        second, no_samples, _ = forecast_markov(fit, 1300, "2026-10-15", horizon=4, paths=2000, seed=31, sample_paths=0)
+        self.assertEqual(first, second)
+        self.assertEqual(no_samples["samplePaths"], [])
+        self.assertTrue(all(len(path["values"]) == 5 for path in diagnostics["samplePaths"]))
+        self.assertEqual(diagnostics["priceMeanMonteCarloSE"], first[-1]["meanSE"])
+        for count in (-1, 21, True, 1.5):
+            with self.assertRaises(ValueError):
+                forecast_markov(fit, 1300, "2026-10-15", horizon=1, paths=2000, sample_paths=count)
 
     def test_em_is_monotone_and_states_are_sorted(self):
         rng = np.random.default_rng(73)

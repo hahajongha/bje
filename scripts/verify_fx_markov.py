@@ -162,7 +162,9 @@ def main():
     quantile_zscores = []
     for horizon in (1, 4):
         expected, point = references[horizon - 1], forecast[horizon - 1]
-        np.testing.assert_allclose(point["mean"], spot * expected["expected_multiplier"], atol=1e-9, rtol=0)
+        np.testing.assert_allclose(point["analyticMean"], spot * expected["expected_multiplier"], atol=1e-9, rtol=0)
+        price_mean_zscore = abs(point["mean"] - spot * expected["expected_multiplier"]) / point["meanSE"]
+        assert price_mean_zscore < 6, (horizon, "mean", price_mean_zscore)
         for key, probability in (("lower95", .025), ("lower90", .05), ("lower68", .16), ("median", .5), ("upper68", .84), ("upper90", .95), ("upper95", .975)):
             reference = exact_log_quantile(expected["components"], probability)
             observed = math.log(point[key] / spot)
@@ -172,6 +174,7 @@ def main():
             assert z_score < 6, (horizon, key, z_score)
     assert simulation["meanAgreementSE"] < 6, simulation
     assert simulation["varianceAgreementSE"] < 6, simulation
+    assert simulation["priceMeanAgreementSE"] < 6, simulation
     assert weekday_dates("2026-10-16", 4) == ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"]
     assert forecast[0]["date"] == "2026-10-19"
 
@@ -185,6 +188,7 @@ def main():
         "max_quantile_monte_carlo_se": max(quantile_zscores),
         "simulation_mean_agreement_se": simulation["meanAgreementSE"],
         "simulation_variance_agreement_se": simulation["varianceAgreementSE"],
+        "simulation_price_mean_agreement_se": simulation["priceMeanAgreementSE"],
         "boundaries": ["absorbing regimes", "identical emission regimes", "Friday-to-Monday date projection"],
         "scope": "implementation mathematics, not out-of-sample predictive performance or empirical coverage",
     }, indent=2))

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Create an offline, private HTML viewer from an FX model snapshot."""
 import argparse
+import base64
 import json
 from pathlib import Path
+import re
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -17,9 +19,12 @@ def export_preview(snapshot_path, output_path):
     data = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace('<', '\\u003c')
     css = (REPO / 'dist/styles.css').read_text(encoding='utf-8')
     css += '\n' + (REPO / 'dist/fx-workspace.css').read_text(encoding='utf-8')
-    js = (REPO / 'dist/fx-model-ui.mjs').read_text(encoding='utf-8')
-    js = js.replace('export function ', 'function ')
-    js = js.replace("if(typeof document!=='undefined')mountFxModel(document);", '')
+    imports = {}
+    for name in ('fx-simulation', 'fx-model-ui'):
+        source = (REPO / f'dist/{name}.mjs').read_text(encoding='utf-8')
+        source = re.sub(r"from\s+(['\"])\./([\w-]+)\.mjs\1", r"from 'bje:\2'", source)
+        imports[f'bje:{name}'] = 'data:text/javascript;base64,' + base64.b64encode(source.encode()).decode()
+    import_map = json.dumps({'imports': imports}, ensure_ascii=False).replace('<', '\\u003c')
     html = '''<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>USDKRW · 3 Regime Markov</title>
 <style>''' + css + '''
@@ -27,7 +32,9 @@ body{margin:0}main.fx-private-preview{max-width:1480px;margin:0 auto;padding:28p
 @media(max-width:600px){main.fx-private-preview{padding:20px 12px}}
 </style></head><body><main class="fx-private-preview"><div id="fxModelHost"></div></main>
 <script type="application/json" id="fxPrivateSnapshot">''' + data + '''</script>
-<script>''' + js + '''
+<script type="importmap">''' + import_map + '''</script>
+<script type="module">
+import { mountFxModel } from 'bje:fx-model-ui';
 const viewer=mountFxModel(document);
 viewer.install(JSON.parse(document.getElementById('fxPrivateSnapshot').textContent));
 </script></body></html>'''

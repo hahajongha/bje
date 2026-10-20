@@ -20,7 +20,7 @@ def export_preview(snapshot_path, output_path):
     imports = {}
     for path in sorted(dist.glob('*.mjs')):
         source = path.read_text(encoding='utf-8')
-        source = re.sub(r"from (['\"])\./([\w-]+)\.mjs\1", r"from 'bje:\2'", source)
+        source = re.sub(r"from\s+(['\"])\./([\w-]+)\.mjs\1", r"from 'bje:\2'", source)
         if path.name == 'app.mjs':
             old = "fetch('./data.json',{cache:'no-store'})"
             if source.count(old) != 1:

@@ -102,6 +102,40 @@ test('market import is atomic and period selections update active distributions'
   assert.throws(()=>normalizeDataInfo(emptyData));
 });
 
+test('Monte Carlo preflight preserves every active panel when a valid schema overflows',()=>{
+  const ids=['hedgeUnit','hedgeHistoryUnit','hedgeHistograms','dataInfoSource','marketSnapshot','bondReference','dataInfoError','dataInfoImportFile','hedgeHistoryPeriod'];
+  const elements=Object.fromEntries(ids.map(id=>[id,{id,innerHTML:'',textContent:'',hidden:true,value:''}]));
+  const applied={hedge:null,analytics:null,model:null,options:null};let callbacks=0;
+  const ui=initDataInfoUI({document:{getElementById:id=>elements[id]},
+    onHedge:next=>{applied.hedge=next;callbacks++;},
+    onAnalytics:next=>{applied.analytics=next;callbacks++;},
+    onModel:(next,options)=>{applied.model=next;applied.options=options;callbacks++;},
+  });
+  const raw=infoFixture(),dates=[];let day=new Date('2026-10-15T00:00:00Z');
+  while(dates.length<504){day=new Date(day.getTime()+86400000);if(day.getUTCDay()%6)dates.push(day.toISOString().slice(0,10));}
+  raw.fxModel={schemaVersion:1,pair:'USDKRW',
+    meta:{asOf:'2026-10-15',source:'SYNTHETIC TEST ONLY',n:2,start:'2026-10-14',end:'2026-10-15'},
+    history:[{date:'2026-10-14',spot:100},{date:'2026-10-15',spot:100}],
+    forecast:dates.map(date=>({date,mean:100,median:100,lower68:99,upper68:101,lower90:98,upper90:102,lower95:97,upper95:103,sigmaLog:.01,probs:[1,0,0]})),
+    model:{currentProbs:[1,0,0],transition:[[1,0,0],[0,1,0],[0,0,1]],
+      regimes:[1,2,3].map(i=>({label:`국면 ${i}`,meanDailyPct:0,volDailyPct:0,persistence:1}))},
+  };
+  const installed=ui.apply(raw);
+  assert.equal(applied.model,installed.fxModel);
+  assert.equal(applied.options.prepared,true);
+  assert.equal(applied.model.simulation.meanEstimator,'arithmetic-price');
+  const previous={snapshot:ui.getSnapshot(),callbacks,...applied};
+  const markup=Object.fromEntries(ids.map(id=>[id,[elements[id].innerHTML,elements[id].textContent,elements[id].hidden]]));
+  const invalid=structuredClone(raw);invalid.meta.source='Must never appear';
+  invalid.fxModel.model.regimes.forEach(regime=>{regime.meanDailyPct=100;regime.volDailyPct=100;});
+  assert.doesNotThrow(()=>normalizeDataInfo(invalid),'the failure must be in simulation, after pure schema validation');
+  assert.throws(()=>ui.apply(invalid));
+  assert.equal(ui.getSnapshot(),previous.snapshot);
+  assert.equal(callbacks,previous.callbacks);
+  for(const key of ['hedge','analytics','model','options'])assert.equal(applied[key],previous[key]);
+  for(const id of ids)assert.deepEqual([elements[id].innerHTML,elements[id].textContent,elements[id].hidden],markup[id]);
+});
+
 if(process.env.BJE_INFO_DATA) {
   test('external market snapshot validates and renders all sections without nonfinite values',async()=>{
     const raw=JSON.parse(await fs.readFile(process.env.BJE_INFO_DATA,'utf8'));

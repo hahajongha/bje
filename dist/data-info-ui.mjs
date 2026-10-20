@@ -1,7 +1,7 @@
 import { normalizeFxHedge } from './fx-hedge.mjs';
 import { normalizeHedgeAnalytics } from './hedge-analytics.mjs';
 import { normalizeFxAnalyticsSpots } from './fx-workspace.mjs';
-import { normalizeFxModel } from './fx-model-ui.mjs';
+import { normalizeFxModel, prepareFxSimulation } from './fx-model-ui.mjs';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (value, digits=2) => Number.isFinite(value) ? value.toLocaleString('ko-KR', {minimumFractionDigits:digits, maximumFractionDigits:digits}) : '—';
@@ -250,6 +250,9 @@ export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{},
     const marketMarkup=renderMarketMarkup(next),bondMarkup=renderBondMarkup(next.bond);
     // Validate and render all fragments before replacing the prior loaded snapshot.
     renderHistogramMarkup(next.fxHedge,years,tenor,view);
+    // Simulation can reject numerically unsafe parameters after schema validation.
+    // Complete it before any panel or callback receives the replacement dataset.
+    if(next.fxModel)next.fxModel=prepareFxSimulation(next.fxModel);
     snapshot=next;
     $('dataInfoSource').textContent=`${next.meta.source} · 기준 ${next.meta.asOf} · 최근 ${next.meta.latestObservation}`;
     $('marketSnapshot').innerHTML=marketMarkup;
@@ -257,7 +260,7 @@ export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{},
     onHedge(next.fxHedge);
     renderHedge(next.fxHedge);
     onAnalytics(next.fxAnalytics);
-    onModel(next.fxModel);
+    onModel(next.fxModel,{prepared:true});
     $('dataInfoError').hidden=true;
     return next;
   }

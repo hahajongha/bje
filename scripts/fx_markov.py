@@ -219,11 +219,18 @@ def weekday_dates(last_date, horizon):
     return dates
 
 
-def forecast_markov(fit, last_spot, last_date, *, horizon=504, paths=40000, seed=20261017):
+def forecast_markov(fit, last_spot, last_date, *, horizon=504, paths=40000, seed=20261017, sample_paths=20):
+    """Summarize the same simulated price paths at every forecast observation.
+
+    Exact moments remain separate benchmarks. The bounded path sample returned
+    in diagnostics is for drawing trajectories, never for computing summaries.
+    """
     if not math.isfinite(float(last_spot)) or last_spot <= 0:
         raise ValueError("last_spot must be positive and finite")
-    if not isinstance(paths, int) or paths < 1000:
+    if isinstance(paths, bool) or not isinstance(paths, int) or paths < 1000:
         raise ValueError("At least 1000 simulation paths are required")
+    if isinstance(sample_paths, bool) or not isinstance(sample_paths, int) or not 0 <= sample_paths <= 20:
+        raise ValueError("sample_paths must be an integer between 0 and 20")
     current = fit.filtered[-1]
     moments = forecast_moments(fit.means, fit.variances, fit.transition, current, horizon)
     dates = weekday_dates(last_date, horizon)
@@ -233,18 +240,35 @@ def forecast_markov(fit, last_spot, last_date, *, horizon=504, paths=40000, seed
     transition_cdf = np.cumsum(fit.transition, axis=1)
     transition_cdf[:, -1] = 1
     forecast = []
+    samples = [{"id": i, "values": [float(last_spot)]} for i in range(sample_paths)]
     for t, moment in enumerate(moments):
         draws = rng.random(paths)
         states = (draws[:, None] > transition_cdf[states]).sum(axis=1)
         cumulative += fit.means[states] + np.sqrt(fit.variances[states]) * rng.standard_normal(paths)
-        quantiles = last_spot * np.exp(np.quantile(cumulative, [0.025, 0.05, 0.16, 0.5, 0.84, 0.95, 0.975]))
+        with np.errstate(over="raise", invalid="raise", under="ignore"):
+            try:
+                prices = last_spot * np.exp(cumulative)
+            except FloatingPointError as error:
+                raise ValueError("Simulation produced non-finite price paths") from error
+        if not np.all(np.isfinite(prices)) or np.any(prices <= 0):
+            raise ValueError("Simulation produced non-positive or non-finite price paths")
+        quantiles = np.quantile(prices, [0.025, 0.05, 0.16, 0.5, 0.84, 0.95, 0.975])
+        price_mean = float(prices.mean())
+        price_mean_se = float(prices.std(ddof=1) / math.sqrt(paths))
+        analytic_mean = last_spot * moment["meanMultiplier"]
+        if not all(math.isfinite(v) for v in (price_mean, price_mean_se, analytic_mean)):
+            raise ValueError("Simulation price moments exceeded the finite numeric range")
         forecast.append({
-            "date": dates[t], "step": t + 1, "mean": last_spot * moment["meanMultiplier"],
+            "date": dates[t], "step": t + 1, "mean": price_mean,
+            "analyticMean": analytic_mean, "meanSE": price_mean_se,
             "median": float(quantiles[3]), "lower68": float(quantiles[2]), "upper68": float(quantiles[4]),
             "lower90": float(quantiles[1]), "upper90": float(quantiles[5]),
             "lower95": float(quantiles[0]), "upper95": float(quantiles[6]),
-            "sigmaLog": math.sqrt(moment["logVariance"]), "probs": moment["probs"].tolist(),
+            "sigmaLog": float(cumulative.std()), "analyticSigmaLog": math.sqrt(moment["logVariance"]),
+            "probs": moment["probs"].tolist(),
         })
+        for sample in samples:
+            sample["values"].append(float(prices[sample["id"]]))
     final = moments[-1]
     empirical_mean, empirical_variance = float(cumulative.mean()), float(cumulative.var())
     mean_se = math.sqrt(final["logVariance"] / paths)
@@ -257,7 +281,11 @@ def forecast_markov(fit, last_spot, last_date, *, horizon=504, paths=40000, seed
         "varianceMonteCarloSE": variance_se,
         "meanAgreementSE": abs(empirical_mean - final["logMean"]) / mean_se if mean_se else 0,
         "varianceAgreementSE": abs(empirical_variance - final["logVariance"]) / variance_se if variance_se else 0,
-        "meanPriceExact": True,
+        "meanPriceExact": False,
+        "analyticPriceMean": forecast[-1]["analyticMean"], "simulatedPriceMean": forecast[-1]["mean"],
+        "priceMeanMonteCarloSE": forecast[-1]["meanSE"],
+        "priceMeanAgreementSE": abs(forecast[-1]["mean"] - forecast[-1]["analyticMean"]) / forecast[-1]["meanSE"] if forecast[-1]["meanSE"] else 0,
+        "samplePaths": samples,
     }
     return forecast, diagnostics, moments[0]
 
@@ -339,6 +367,7 @@ def build_payload(dates, spots, *, source, horizon=504, paths=40000, seed=202610
     returns = np.diff(np.log(spots))
     fit = fit_markov(returns, seed=seed, starts=starts, max_iter=max_iter)
     forecast, simulation, next_day = forecast_markov(fit, float(spots[-1]), dates[-1], horizon=horizon, paths=paths, seed=seed + 1)
+    sample_paths = simulation.pop("samplePaths")
     probs = np.vstack([fit.initial, fit.filtered])
     payload = {
         "schemaVersion": 1, "pair": "USDKRW",
@@ -355,6 +384,13 @@ def build_payload(dates, spots, *, source, horizon=504, paths=40000, seed=202610
         },
         "history": [{"date": day, "spot": float(spot), "probs": probability.tolist()} for day, spot, probability in zip(dates, spots, probs)],
         "forecast": forecast,
+        "samplePaths": sample_paths,
+        "simulation": {
+            "engine": "markov-gaussian", "version": 1, "paths": paths, "seed": seed + 1,
+            "horizon": horizon, "samplePathCount": len(sample_paths), "rng": "numpy-pcg64",
+            "meanEstimator": "arithmetic-price", "meanMethod": "empirical-price",
+            "intervalMethod": "pointwise-empirical-quantiles", "diagnostics": simulation.copy(),
+        },
         "model": {
             "regimes": [{
                 "label": LABELS[j], "meanDailyPct": float(fit.means[j] * 100),

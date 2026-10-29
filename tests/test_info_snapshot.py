@@ -91,6 +91,27 @@ class TestInfoReader(unittest.TestCase):
             with self.assertRaises(ValueError):
                 read_info(path, date(2026, 1, 2))
 
+    def test_moved_and_absent_headers(self):
+        def move_hw_and_drop_move(sheet):
+            sheet.insert_cols(2)
+            sheet['B8'], sheet['B9'] = 'USDKRW_HP_3M', '프리미엄'
+            sheet.delete_cols(column_index_from_string('HX'))
+            # Columns before the old HW shift right by one; later ones are unchanged.
+            for column in ('IK', 'JO', 'JP', 'JQ'):
+                sheet[column + '8'] = sheet[column + '9'] = None
+            for n in range(10, sheet.max_row + 1):
+                sheet[f'B{n}'] = -7
+        path = self.workbook([(date(2026, 1, 2), {'HW': -1, 'IK': 90, 'JO': 100})], move_hw_and_drop_move)
+        rows, audit = read_info(path, date(2026, 1, 2))
+        self.assertEqual(rows[0][1]['HW'], -7)
+        self.assertIsNone(rows[0][1]['IK'])
+        self.assertIsNone(rows[0][1]['JO'])
+        self.assertEqual(audit['missingHeaders'], ['미국_MOVE', 'KIS채권종합 총수익지수(산출일)',
+                                                   'KIS채권종합 평균 수정 듀레이션(산출일)',
+                                                   'KIS채권종합 평균 CONVEXITY(산출일)'])
+        self.assertEqual(audit['headersVerified'], len(HEADERS) - 4)
+        self.assertEqual(build_hedge(rows)['pairs'][0]['source'], 'DailyRate!B/HX/HY')
+
     def test_numeric_type_gate_and_repo_safety(self):
         self.assertEqual(signed_number(-2), -2.0)
         self.assertEqual(signed_number(0), 0.0)

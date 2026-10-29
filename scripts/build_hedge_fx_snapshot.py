@@ -12,11 +12,8 @@ from datetime import date
 import json
 from pathlib import Path
 
-from build_info_snapshot import build_from_rows, file_hash, outside_repo, read_info
+from build_info_snapshot import build_from_rows, cell, file_hash, outside_repo, read_info
 from fx_markov import build_payload
-
-
-FX_SOURCE = 'data_info.xlsx · DailyRate!A/V · USDKRW · 중간값'
 
 
 def model_input(rows, start, as_of):
@@ -52,12 +49,12 @@ def build(info, as_of, *, start=date(2015, 1, 1), horizon=504, paths=40000,
     rows, quality = read_info(info, as_of)
     snapshot = build_from_rows(info, as_of, rows, quality)
     observed = model_input(rows, start, as_of)
-    model = build_payload(observed['dates'], observed['spots'], source=FX_SOURCE,
+    model = build_payload(observed['dates'], observed['spots'], source=f'data_info.xlsx · DailyRate!A/{cell("V")} · USDKRW · 중간값',
                           horizon=horizon, paths=paths, seed=seed, starts=starts,
                           max_iter=max_iter, holdout=holdout)
     model['meta']['provenance'] = {
         'primary': {'file': info.name, 'sheet': 'DailyRate', 'dateColumn': 'A',
-                    'valueColumn': 'V', 'header': ['USDKRW', '중간값'], 'sha256': file_hash(info)},
+                    'valueColumn': cell('V'), 'header': ['USDKRW', '중간값'], 'sha256': file_hash(info)},
         'transform': 'Cached positive weekday midpoint levels; observed dates retained; no filling, interpolation, or source splicing.',
         **observed['quality'],
     }

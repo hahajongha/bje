@@ -17,7 +17,7 @@ from pathlib import Path
 from statistics import mean, stdev
 
 from openpyxl import load_workbook
-from openpyxl.utils import column_index_from_string
+from openpyxl.utils import get_column_letter
 
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = 'data_info.xlsx · DailyRate'
@@ -47,6 +47,15 @@ HEADERS = {
     'JP': ('KIS채권종합', '평균 수정 듀레이션(산출일)'),
     'JQ': ('KIS채권종합', '평균 CONVEXITY(산출일)'),
 }
+# Internal series keys are the original template letters; COLUMNS maps each to
+# the letter where read_info actually found it, for source labels.
+COLUMNS = {}
+
+
+def cell(*columns):
+    return '/'.join(COLUMNS.get(column, column) for column in columns)
+
+
 RATE_SPECS = [
     ('kr_policy', '한국 기준금리', 'Q'), ('kr_3y', '한국 3Y', 'I'),
     ('kr_10y', '한국 10Y', 'M'), ('us_policy', '미국 기준금리', 'AT'),
@@ -97,17 +106,28 @@ def read_info(path, as_of):
         header_rows = list(sheet.iter_rows(min_row=8, max_row=9, values_only=True))
         if len(header_rows) != 2 or tuple(row[0] for row in header_rows) != ('DATES', '일자'):
             raise ValueError('Expected DailyRate!A8=DATES and A9=일자.')
-        indices = {}
+        # Columns are located by their exact row-8/row-9 identity, not by
+        # position. A name whose row-9 label changed, or a duplicated identity,
+        # is refused; a name absent from the workbook leaves that series empty.
+        pairs = list(zip(*header_rows))
+        indices, missing = {}, []
+        COLUMNS.clear()
         for column, expected in HEADERS.items():
-            index = column_index_from_string(column) - 1
-            matches = [i for i, pair in enumerate(zip(*header_rows)) if pair == expected]
-            actual = tuple(row[index] if index < len(row) else None for row in header_rows)
-            if actual != expected or matches != [index]:
-                raise ValueError(f'Changed or duplicate source headers at DailyRate!{column}8:9; expected {expected}.')
+            matches = [i for i, pair in enumerate(pairs) if pair == expected]
+            if len(matches) > 1:
+                raise ValueError(f'Duplicate source headers {expected} at DailyRate row 8:9.')
+            if not matches:
+                if any(pair[0] == expected[0] for pair in pairs):
+                    raise ValueError(f'Changed source header {expected[0]} at DailyRate row 9; expected {expected}.')
+                missing.append(expected[0] if column not in ('JO', 'JP', 'JQ') else ' '.join(expected))
+                continue
             indices[column] = matches[0]
+            COLUMNS[column] = get_column_letter(matches[0] + 1)
+        if not indices:
+            raise ValueError('No expected DailyRate headers found in rows 8:9.')
         quality = {'futureRowsExcluded': 0, 'identicalDuplicateRows': 0, 'invalidDateRows': 0,
                    'invalidNumericCells': 0, 'missingNumericCells': 0, 'cachedValuesOnly': True,
-                   'headersVerified': len(indices), 'gapFilling': False}
+                   'headersVerified': len(indices), 'missingHeaders': missing, 'gapFilling': False}
         dated = {}
         for row in sheet.iter_rows(min_row=10, values_only=True):
             observed = row[0]
@@ -120,7 +140,7 @@ def read_info(path, as_of):
             if observed > as_of:
                 quality['futureRowsExcluded'] += 1
                 continue
-            values = {}
+            values = dict.fromkeys(HEADERS)
             for column, index in indices.items():
                 raw = row[index] if index < len(row) else None
                 value = signed_number(raw)
@@ -153,7 +173,7 @@ def metric(rows, id_, label, column, unit):
     return {'id': id_, 'label': label, 'value': value, 'previous': previous,
             'change': value - previous if previous is not None else None, 'unit': unit,
             'asOf': observed.isoformat(), 'previousDate': previous_date.isoformat() if previous_date else None,
-            'source': f'DailyRate!{column} · {HEADERS[column][0]}'}
+            'source': f'DailyRate!{cell(column)} · {HEADERS[column][0]}'}
 
 
 def build_market(rows):
@@ -196,7 +216,7 @@ def build_hedge(rows):
         pairs.append({'currency': currency, 'asOf': observed.isoformat() if observed else None,
                       **{key: latest.get(c) for key, c in zip(('hedge3m', 'hedge6m', 'hedge12m'), columns)},
                       'fxVol': vol, 'volAsOf': vol_as_of, 'volPeriod': vol_period, 'aggregation': 'snapshot',
-                      'source': f"DailyRate!{'/'.join(columns)}", 'history': history,
+                      'source': f'DailyRate!{cell(*columns)}', 'history': history,
                       'tenorHistory': tenor_history})
     return {'unit': 'source_value', 'source': SOURCE, 'pairs': pairs}
 
@@ -218,12 +238,12 @@ def build_fx_analytics(rows, as_of):
             for day, values in history_rows if all(values[column] is not None for column in required)
         ]
         rate_pairs.append({'tenor': tenor,
-                           'krSource': f'DailyRate!{kr_column} · {HEADERS[kr_column][0]}',
-                           'usSource': f'DailyRate!{us_column} · {HEADERS[us_column][0]}',
+                           'krSource': f'DailyRate!{cell(kr_column)} · {HEADERS[kr_column][0]}',
+                           'usSource': f'DailyRate!{cell(us_column)} · {HEADERS[us_column][0]}',
                            'history': history})
     spots = [
         {'id': identifier, 'label': label, 'unit': unit,
-         'source': f'DailyRate!{column} · {HEADERS[column][0]} · {HEADERS[column][1]}',
+         'source': f'DailyRate!{cell(column)} · {HEADERS[column][0]} · {HEADERS[column][1]}',
          'history': [{'date': day.isoformat(), 'value': values[column]}
                      for day, values in history_rows if values[column] is not None and values[column] > 0]}
         for identifier, label, column, unit in FX_SPECS
@@ -260,7 +280,7 @@ def build_bond(rows, as_of, months=60):
     result = {'name': 'KIS 종합채권', 'asOf': None, 'index': None, 'duration': None, 'convexity': None,
               'totalReturnYtd': None, 'totalReturn1y': None, 'annualMean': None, 'annualVol': None,
               'annualGeometricReturn': None, 'maxDrawdown': None, 'periodStart': None, 'periodEnd': None,
-              'observations': 0, 'monthly': [], 'source': 'DailyRate!JO: JQ'}
+              'observations': 0, 'monthly': [], 'source': f"DailyRate!{cell('JO', 'JP', 'JQ')}"}
     if not common:
         return result, 'No positive common index/duration/convexity observation.'
     latest = max(common)
@@ -317,7 +337,7 @@ def build_from_rows(info, as_of, rows, quality):
               'meta': {'source': SOURCE, 'asOf': as_of.isoformat(), 'latestObservation': latest.isoformat(),
                        'sha256': file_hash(info), 'units': {'hedge': 'source_value', 'rates': 'percent',
                        'bondReturns': 'percent', 'fxVolatility': 'annual_percent'}, 'quality': quality,
-                       'method': ['Cached finite signed values; exact row8/9 header verification; no filling or interpolation.',
+                       'method': ['Cached finite signed values; columns located by exact row8/9 header identity; absent headers leave series empty; no filling or interpolation.',
                                   'Metric changes are latest minus previous available observation; dates are retained.',
                                   'Hedge premium units are unspecified in the source headers; signed source values are unchanged.',
                                   'Hedge history: complete same-date 3M/6M/12M arithmetic averages since 2015-01-01.',

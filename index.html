@@ -61,8 +61,23 @@
     </section>
     <section id="assumptions" class="tab-panel" hidden>
       <div id="bondReference" class="info-reference"></div>
-      <article class="panel input-panel"><div class="panel-heading"><div><div class="eyebrow">CAPITAL MARKET ASSUMPTIONS</div><h2>자산별 투자 가정</h2></div><span class="pill">연율 · % 단위</span></div><div class="table-scroll"><table class="input-table"><thead><tr><th>자산군</th><th>수익률 %</th><th>변동성 %</th><th>현재 비중 %</th></tr></thead><tbody id="assetInputs"></tbody></table></div><div class="input-settings"><label>무위험금리 % <input id="riskFreeInput" type="number" step="0.01" value="2.5"></label><span id="weightSum">비중 합계 —</span><button class="text-button" id="normalizeButton">비중을 100%로 정규화</button></div></article>
-      <article class="panel correlation-panel"><div class="panel-heading"><div><div class="eyebrow">DIVERSIFICATION</div><h2>상관관계</h2></div><span class="small">대칭 적용 · −1 ~ 1</span></div><div class="table-scroll" id="correlationInputs"></div></article>
+      <article class="panel input-panel">
+        <div class="panel-heading"><div><div class="eyebrow">CAPITAL MARKET ASSUMPTIONS</div><h2>자산별 투자 가정</h2></div><span class="pill">연율 · % 단위</span></div>
+        <div class="table-scroll"><table class="input-table cma-table">
+          <thead>
+            <tr>
+              <th rowspan="2" scope="col">자산군</th>
+              <th colspan="2" scope="colgroup" class="cma-scenario optimistic"><span>낙관</span><label>확률 % <input type="number" data-probability="0" min="0" max="100" step=".01" aria-label="낙관 확률 %"></label></th>
+              <th colspan="2" scope="colgroup" class="cma-scenario neutral"><span>중립</span><label>확률 % <input type="number" data-probability="1" min="0" max="100" step=".01" aria-label="중립 확률 %"></label></th>
+              <th colspan="2" scope="colgroup" class="cma-scenario pessimistic"><span>비관</span><label>확률 % <input type="number" data-probability="2" min="0" max="100" step=".01" aria-label="비관 확률 %"></label></th>
+              <th colspan="2" scope="colgroup" class="cma-combined">확률 반영</th>
+            </tr>
+            <tr><th scope="col">수익률 %</th><th scope="col">변동성 %</th><th scope="col">수익률 %</th><th scope="col">변동성 %</th><th scope="col">수익률 %</th><th scope="col">변동성 %</th><th scope="col" class="cma-combined">수익률 %</th><th scope="col" class="cma-combined">변동성 %</th></tr>
+          </thead><tbody id="assetInputs"></tbody>
+        </table></div>
+        <div class="input-settings"><label>무위험금리 % <input id="riskFreeInput" type="number" step="0.01" value="2.5"></label><span id="probabilitySum" role="status" aria-live="polite">확률 합계 —</span><span id="cmaDraftStatus" class="small" role="status" aria-live="polite"></span></div>
+      </article>
+      <article class="panel correlation-panel"><div class="panel-heading"><div><div class="eyebrow">DIVERSIFICATION</div><h2>상관관계</h2></div><span class="small">시나리오 공통 · 대칭 적용 · −1 ~ 1</span></div><div class="table-scroll" id="correlationInputs"></div></article>
       <div class="form-actions"><label class="button secondary" for="importFile">JSON 불러오기 <span>↑</span></label><input type="file" id="importFile" accept=".json,application/json" hidden><button class="button secondary" id="resetButton">초기 가정 복원</button><button class="button primary" id="applyButton">가정 적용 <span>→</span></button><span class="small" id="saveStatus">변경사항은 적용 후 이 브라우저에 저장됩니다.</span></div>
     </section>
     <section id="risk" class="tab-panel" hidden>

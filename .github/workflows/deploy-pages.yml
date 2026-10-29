@@ -1,0 +1,49 @@
+name: Deploy dist to GitHub Pages
+
+# https://hahajongha.github.io/bje/ serves the gh-pages branch. Mirror main's
+# dist/ there whenever it changes, including dist/data/market.json commits
+# pushed by hahajongha/for_data.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dist/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-pages
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src
+
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: site
+
+      - name: Mirror dist into gh-pages
+        run: |
+          find site -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -R src/dist/. site/
+          touch site/.nojekyll
+          cd site
+          git add -A
+          if git diff --cached --quiet; then
+            echo "gh-pages already matches dist - nothing to deploy"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "deploy: dist from main ${GITHUB_SHA::7}"
+          git push origin HEAD:gh-pages

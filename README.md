@@ -14,7 +14,7 @@
 - 리스크 탭: 선택 포트폴리오의 변동성, 부호 있는 위험기여, 분산효과 비율, 1년 수익률 범위
 - 환헤지 탭: 모니터링 / 환헤지모델A / 환헤지모델B, 4개 통화의 만기별 비용과 환 변동성
 
-정적 HTML/CSS/ES modules이며 외부 JavaScript·폰트·CDN 의존성이 없습니다. `dist/`를 정적 호스팅으로 제공하면 됩니다. 웹 서버 없이 HTML을 직접 여는 `file://` 실행은 지원하지 않습니다.
+정적 HTML/CSS/ES modules이며 외부 JavaScript·폰트·CDN 의존성이 없습니다. `dist/`를 정적 호스팅으로 제공하면 됩니다. https://hahajongha.github.io/bje/ 는 `gh-pages` 브랜치를 제공하며, `main`의 `dist/`가 바뀌면 `.github/workflows/deploy-pages.yml`이 `gh-pages`로 그대로 복사합니다. `gh-pages`는 직접 수정하지 마십시오. 웹 서버 없이 HTML을 직접 여는 `file://` 실행은 지원하지 않습니다.
 
 ## 데이터 경계
 

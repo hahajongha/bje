@@ -1,8 +1,9 @@
 /**
  * Node DOM-stub integration checks, not browser or visual QA.
  * The real app's event handlers, calculations and markup run here.
- * Browser layout, native number-input behavior and persistence are
- * not validated. No private data values are embedded in this file.
+ * Browser layout and native number-input behavior are not validated.
+ * Persistence is checked against an in-memory localStorage adapter.
+ * No private data values are embedded in this file.
  *
  * node --test tests/ui-smoke.test.mjs
  * BJE_TEST_DATA=/path/to/private-data.json node --test tests/ui-smoke.test.mjs
@@ -19,6 +20,7 @@ import { frontierTarget } from '../dist/frontier-target.mjs';
 import { initDataInfoUI } from '../dist/data-info-ui.mjs';
 import { mountHedgeAnalytics } from '../dist/hedge-analytics.mjs';
 import { mountFxWorkspace } from '../dist/fx-workspace.mjs';
+import { SCENARIOS, createScenarios, aggregateScenarios, remapScenarios } from '../dist/cma-scenarios.mjs';
 
 const html = await fs.readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
 const source = (await fs.readFile(new URL('../dist/app.mjs', import.meta.url), 'utf8'))
@@ -103,19 +105,21 @@ function createDocument() {
   };
 }
 
-async function boot(raw, published = {}) {
+async function boot(raw, published = {}, savedCache = new Map()) {
   const document = createDocument();
-  const cache = new Map();
+  const cache = new Map(savedCache);
   const run = new AsyncFunction(
     'covariance', 'stats', 'optimize', 'validateInputs', 'demoData', 'normalizeFxHedge', 'renderHedgeMarkup', 'renderRiskMarkup',
     'defaultPolicy', 'validatePolicy', 'satisfiesPolicy', 'optimizeAllocation', 'samplePortfolios', 'initDataInfoUI', 'frontierTarget',
-    'mountHedgeAnalytics', 'mountFxWorkspace', 'document', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
+    'mountHedgeAnalytics', 'mountFxWorkspace', 'SCENARIOS', 'createScenarios', 'aggregateScenarios', 'remapScenarios',
+    'document', 'localStorage', 'fetch', 'setTimeout', 'clearTimeout',
     `${source}\nreturn { snapshot: () => structuredClone({data,state,results,chosen,frontierComparison}), dataInfoUI, hedgeAnalytics, fxWorkspace };`,
   );
   const app = await run(
     covariance, stats, optimize, validateInputs, demoData, normalizeFxHedge, renderHedgeMarkup, renderRiskMarkup,
     defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios, initDataInfoUI, frontierTarget,
-    mountHedgeAnalytics, mountFxWorkspace, document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
+    mountHedgeAnalytics, mountFxWorkspace, SCENARIOS, createScenarios, aggregateScenarios, remapScenarios,
+    document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
     async url => url === './data.json' ? { ok: true, json: async () => structuredClone(raw) }
       : url in published ? { ok: true, json: async () => structuredClone(published[url]) } : { ok: false, status: 404 },
     () => 1, () => {},
@@ -609,4 +613,191 @@ test('invalid frontier ranges leave the last valid chart intact; either axis can
   assert.doesNotMatch(app.get('frontierChart').innerHTML,/NaN|Infinity/);
   app.get('frontierAxisReset').click();
   assert.equal(app.get('frontierChart').innerHTML,previous);
+});
+
+const cmaFixture = () => ({
+  schemaVersion: 1,
+  meta: { demo: true, dataFingerprint: 'cma-two-asset-test' },
+  assets: [
+    { id: 'bond', name: '채권', group: 'bond', mu: 5, vol: 10, weight: .6 },
+    { id: 'equity', name: '주식', group: 'equity', mu: 3, vol: 5, weight: .4 },
+  ],
+  correlation: [[1, .25], [.25, 1]],
+});
+const cmaMeans = [[10, 6], [5, 3], [-5, 1]];
+const cmaVols = [[8, 4], [10, 5], [15, 7]];
+const near = (actual, expected, tolerance = 1e-9) => assert.ok(Math.abs(actual - expected) < tolerance, `${actual} != ${expected}`);
+const cmaField = (app, scenario, asset, field) => app.document.querySelectorAll('[data-field]').find(el =>
+  el.dataset.scenario === String(scenario) && el.dataset.i === String(asset) && el.dataset.field === field);
+function fillCmaFixture(app) {
+  app.document.querySelectorAll('[data-probability]').forEach(el => { el.value = [20, 50, 30][Number(el.dataset.probability)]; });
+  for (let s = 0; s < 3; s++) for (let i = 0; i < 2; i++) {
+    cmaField(app, s, i, 'mu').value = cmaMeans[s][i];
+    cmaField(app, s, i, 'vol').value = cmaVols[s][i];
+  }
+  cmaField(app, 2, 1, 'vol').oninput();
+}
+
+test('CMA replaces current-weight inputs with scenarios and preserves initial portfolio assumptions', async () => {
+  const app = await boot(demoData), snapshot = app.snapshot();
+  assert.equal(app.document.querySelectorAll('[data-field=weight]').length, 0);
+  assert.equal(app.document.getElementById('normalizeButton'), null);
+  assert.equal(app.document.getElementById('weightSum'), null);
+  const cmaSection = html.match(/<section id="assumptions"[\s\S]*?<\/section>/)[0];
+  assert.doesNotMatch(cmaSection, /현재 비중/);
+  assert.deepEqual(app.document.querySelectorAll('[data-probability]').map(el => el.value), ['0.00', '100.00', '0.00']);
+  assert.equal(app.document.querySelectorAll('[data-field]').length, 6 * demoData.assets.length);
+  assert.deepEqual(snapshot.state.scenarios.map(s => s.probability), [0, 1, 0]);
+  assert.deepEqual(snapshot.state.assets.map(({ mu, vol, weight }) => ({ mu, vol, weight })), demoData.assets.map(({ mu, vol, weight }) => ({ mu, vol, weight })));
+  const expected = stats(demoData.assets.map(a => a.weight), demoData.assets, covariance(demoData.assets, demoData.correlation), 2.5);
+  near(snapshot.results.current.mu, expected.mu);
+  near(snapshot.results.current.vol, expected.vol);
+});
+
+test('CMA preview stays draft until applying; full mixed covariance reaches Portfolio and Risk', async () => {
+  const app = await boot(cmaFixture()), before = app.snapshot();
+  fillCmaFixture(app);
+  assert.equal(app.get('probabilitySum').textContent, '확률 합계 100.00%');
+  assert.equal(app.get('probabilitySum').classList.contains('warn'), false);
+  assert.equal(app.get('cmaDraftStatus').textContent, '');
+  assert.equal(app.get('cma-mu-0').textContent, '3.00');
+  assert.equal(app.get('cma-vol-0').textContent, '12.70');
+  assert.equal(app.get('cma-vol-1').textContent, '5.78');
+  assert.deepEqual(app.snapshot(), before, 'Draft changes must not leak into applied results');
+  assert.equal(app.cache.size, 0);
+  app.get('applyButton').click();
+  assert.equal(app.get('alert').hidden, true);
+  const after = app.snapshot();
+  assert.deepEqual(after.state.assets.map(a => a.weight), [.6, .4]);
+  assert.deepEqual(after.state.taa1, before.state.taa1);
+  assert.deepEqual(after.state.taa2, before.state.taa2);
+  assert.deepEqual(after.state.policy, before.state.policy);
+  assert.deepEqual(after.state.scenarios.map(s => s.probability), [.2, .5, .3]);
+  assert.deepEqual(after.state.assets.map(a => a.mu), [3, 3]);
+  near(after.state.assets[0].vol ** 2, 161.3);
+  near(after.state.assets[1].vol ** 2, 33.4);
+  // Independent hand-calculated fixture: total covariance includes 9.0 from
+  // co-moving scenario means; using shared conditional correlation alone fails.
+  near(after.results.current.vol ** 2, 75.28);
+  near(after.results.current.mu, 3);
+  near(after.results.current.riskShares[0], .6 * (.6 * 161.3 + .4 * 24.725) / 75.28);
+  assert.match(app.get('riskContent').innerHTML, /8\.68/);
+  assert.match(app.get('portfolioCards').innerHTML, /8\.68/);
+  assert.match(app.get('selectedMetrics').innerHTML, /8\.68/);
+  const reapplied = app.snapshot();
+  app.get('applyButton').click();
+  assert.deepEqual(app.snapshot(), reapplied, 'Applying unchanged formatted fields must preserve full precision');
+});
+
+for (const [name, edit] of [
+  ['probabilities below 100%', app => { app.document.querySelectorAll('[data-probability]')[1].value = '49'; }],
+  ['probabilities above 100%', app => { app.document.querySelectorAll('[data-probability]')[1].value = '51'; }],
+  ['blank probability', app => { app.document.querySelectorAll('[data-probability]')[1].value = ''; }],
+  ['negative probability', app => { app.document.querySelectorAll('[data-probability]')[0].value = '-10'; app.document.querySelectorAll('[data-probability]')[1].value = '80'; }],
+  ['blank return', app => { cmaField(app, 2, 0, 'mu').value = ''; }],
+  ['negative volatility', app => { cmaField(app, 0, 0, 'vol').value = '-1'; }],
+  ['zero volatility', app => { cmaField(app, 1, 0, 'vol').value = '0'; }],
+]) {
+  test(`CMA rejects ${name} without changing state, results or persistence`, async () => {
+    const app = await boot(cmaFixture());
+    fillCmaFixture(app); app.get('applyButton').click();
+    const before = app.snapshot(), saved = new Map(app.cache), cards = app.get('portfolioCards').innerHTML;
+    edit(app); cmaField(app, 0, 0, 'mu').oninput();
+    assert.equal(app.get('cma-mu-0').textContent, '—');
+    assert.notEqual(app.get('cmaDraftStatus').textContent, '');
+    app.get('applyButton').click();
+    assert.equal(app.get('alert').hidden, false);
+    assert.deepEqual(app.snapshot(), before);
+    assert.deepEqual(app.cache, saved);
+    assert.equal(app.get('portfolioCards').innerHTML, cards);
+  });
+}
+
+test('CMA scenarios survive reload and reset restores the neutral baseline', async () => {
+  const raw = cmaFixture(), app = await boot(raw), initial = app.snapshot();
+  fillCmaFixture(app); app.get('applyButton').click();
+  const saved = app.snapshot(), reloaded = await boot(raw, {}, app.cache);
+  assert.equal(reloaded.get('alert').hidden, true);
+  assert.deepEqual(reloaded.snapshot().state, saved.state);
+  assert.deepEqual(reloaded.snapshot().results, saved.results);
+  assert.deepEqual(reloaded.document.querySelectorAll('[data-probability]').map(el => el.value), ['20.00', '50.00', '30.00']);
+  assert.equal(cmaField(reloaded, 2, 0, 'mu').value, '-5.00');
+  reloaded.get('resetButton').click();
+  assert.deepEqual(reloaded.snapshot().state, initial.state);
+  assert.deepEqual(reloaded.snapshot().results, initial.results);
+  assert.deepEqual((await boot(raw, {}, reloaded.cache)).snapshot().state, initial.state);
+});
+
+test('CMA preserves precise probabilities when rendering and reloading a 100% total', async () => {
+  const raw = cmaFixture(), app = await boot(raw);
+  const percentages = ['33.3333', '33.3333', '33.3334'];
+  const probabilities = percentages.map(value => Number(value) / 100);
+  app.document.querySelectorAll('[data-probability]').forEach((el, i) => { el.value = percentages[i]; });
+  app.document.querySelectorAll('[data-probability]')[2].oninput();
+  assert.equal(app.get('probabilitySum').textContent, '확률 합계 100.00%');
+  assert.equal(app.get('probabilitySum').classList.contains('warn'), false);
+  app.get('applyButton').click();
+  assert.equal(app.get('alert').hidden, true);
+  for (const instance of [app, await boot(raw, {}, app.cache)]) {
+    assert.deepEqual(instance.snapshot().state.scenarios.map(s => s.probability), probabilities);
+    assert.deepEqual(instance.document.querySelectorAll('[data-probability]').map(el => el.value), percentages);
+    assert.equal(instance.get('probabilitySum').textContent, '확률 합계 100.00%');
+    assert.equal(instance.get('probabilitySum').classList.contains('warn'), false);
+    assert.equal(instance.get('cmaDraftStatus').textContent, '');
+    instance.get('applyButton').click();
+    assert.equal(instance.get('alert').hidden, true);
+    assert.deepEqual(instance.snapshot().state.scenarios.map(s => s.probability), probabilities);
+  }
+});
+
+test('legacy saved CMA moments and weights migrate without reverting user edits', async () => {
+  const original = await boot(demoData), legacy = original.snapshot().state;
+  delete legacy.scenarios;
+  legacy.assets[0].mu = 4.6; legacy.assets[0].vol = 4.4;
+  legacy.assets[0].weight = .3; legacy.assets.at(-1).weight = .05;
+  legacy.rf = 2.75; legacy.target = 5; legacy.edited = true;
+  const cache = new Map([[`bje-portfolio-v2:${demoData.meta.dataFingerprint}`, JSON.stringify(legacy)]]);
+  const migrated = await boot(demoData, {}, cache), next = migrated.snapshot();
+  assert.equal(migrated.get('alert').hidden, true);
+  const { scenarios, ...rest } = next.state;
+  assert.deepEqual(rest, legacy);
+  assert.deepEqual(scenarios.map(s => s.probability), [0, 1, 0]);
+  assert.ok(scenarios.every(s => s.assets[0].mu === 4.6 && s.assets[0].vol === 4.4));
+  const expected = stats(legacy.assets.map(a => a.weight), legacy.assets, covariance(legacy.assets, legacy.correlation), legacy.rf);
+  near(next.results.current.mu, expected.mu); near(next.results.current.vol, expected.vol);
+  migrated.get('applyButton').click();
+  const persisted = JSON.parse([...migrated.cache.values()][0]);
+  assert.deepEqual(persisted.scenarios, scenarios);
+});
+
+test('TAA edits and presets keep mixed scenarios synchronized without discarding their structure', async () => {
+  const app = await boot(cmaFixture());
+  fillCmaFixture(app); app.get('applyButton').click();
+  const before = app.snapshot().state;
+  const moment = (asset, field) => app.document.querySelectorAll('[data-taa-moment]').find(el => el.dataset.asset === String(asset) && el.dataset.taaMoment === field);
+  moment(0, 'mu').value = '4'; moment(0, 'vol').value = '10';
+  app.get('taaPreset').value = '0'; app.get('taaSave').click();
+  assert.equal(app.get('alert').hidden, true);
+  assert.deepEqual(app.snapshot().state.scenarios, before.scenarios);
+  moment(0, 'mu').value = '6'; moment(0, 'vol').value = '12';
+  app.get('taaLoad').click();
+  assert.equal(moment(0, 'mu').value, '4'); assert.equal(moment(0, 'vol').value, '10');
+  app.get('taaApply').click();
+  assert.equal(app.get('alert').hidden, true);
+  const after = app.snapshot().state;
+  assert.deepEqual(after.scenarios.map(s => s.probability), [.2, .5, .3]);
+  near(after.assets[0].mu, 4); near(after.assets[0].vol, 10);
+  assert.ok(after.scenarios[0].assets[0].mu > after.scenarios[1].assets[0].mu);
+  assert.ok(after.scenarios[1].assets[0].mu > after.scenarios[2].assets[0].mu);
+  for (let s = 0; s < 3; s++) {
+    near((after.scenarios[s].assets[0].mu - 4) / 10, (before.scenarios[s].assets[0].mu - 3) / before.assets[0].vol);
+    near(after.scenarios[s].assets[0].vol / 10, before.scenarios[s].assets[0].vol / before.assets[0].vol);
+    assert.deepEqual(after.scenarios[s].assets[1], before.scenarios[s].assets[1]);
+  }
+  const saved = structuredClone(after);
+  app.get('applyButton').click();
+  assert.equal(app.get('alert').hidden, true);
+  near(app.snapshot().state.assets[0].mu, 4); near(app.snapshot().state.assets[0].vol, 10);
+  assert.deepEqual(app.snapshot().state.scenarios, saved.scenarios);
+  assert.deepEqual((await boot(cmaFixture(), {}, app.cache)).snapshot().state.scenarios, saved.scenarios);
 });

@@ -7,6 +7,7 @@ import { frontierTarget } from './frontier-target.mjs';
 import { initDataInfoUI } from './data-info-ui.mjs';
 import { mountHedgeAnalytics } from './hedge-analytics.mjs';
 import { mountFxWorkspace } from './fx-workspace.mjs';
+import { SCENARIOS, createScenarios, aggregateScenarios, remapScenarios } from './cma-scenarios.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#bddb9c','#80b6a5','#d7bb86','#87a6c0','#b5a5c7','#b68e81','#7ec9cf'];
@@ -46,7 +47,9 @@ function storageSave(){try{localStorage.setItem(cacheKey,JSON.stringify(state));
 function validateState(next){
   if(!Array.isArray(next.saaPresets)||next.saaPresets.length!==2||!Array.isArray(next.taaPresets)||next.taaPresets.length!==2)throw Error('저장된 SAA·TAA 형식을 확인하십시오.');
   validateInputs(next.assets,next.correlation);
-  const matrix=covariance(next.assets,next.correlation);
+  const combined=aggregateScenarios(next.assets,next.correlation,next.scenarios);
+  if(next.assets.some((asset,i)=>['mu','vol'].some(key=>Math.abs(asset[key]-combined.assets[i][key])>1e-8*Math.max(1,Math.abs(asset[key])))))throw Error('시나리오와 적용 가정이 일치하지 않습니다.');
+  const matrix=combined.covariance;
   stats(next.assets.map(a=>a.weight),next.assets,matrix,next.rf);
   stats(next.taa1,next.assets,matrix,next.rf);stats(next.taa2,next.assets,matrix,next.rf);
   validatePolicy(next.assets,next.policy);
@@ -56,11 +59,12 @@ function validateState(next){
 function install(raw,restore=true){
   const nextData=normalizeData(raw);
   const weights=nextData.assets.map(a=>a.weight);
-  const nextInitial={assets:clone(nextData.assets),correlation:clone(nextData.correlation),rf:2.5,target:6,edited:false,policy:defaultPolicy(nextData.assets),taa1:[...weights],taa2:[...weights],saaPresets:[null,null],taaPresets:[null,null]};
+  const nextInitial={assets:clone(nextData.assets),scenarios:createScenarios(nextData.assets),correlation:clone(nextData.correlation),rf:2.5,target:6,edited:false,policy:defaultPolicy(nextData.assets),taa1:[...weights],taa2:[...weights],saaPresets:[null,null],taaPresets:[null,null]};
   let nextState=clone(nextInitial);
   const nextKey=`bje-portfolio-v2:${nextData.meta.dataFingerprint||JSON.stringify([nextData.meta,nextData.assets.map(a=>[a.id,a.mu,a.vol])])}`;
   if(restore)try{const saved=JSON.parse(localStorage.getItem(nextKey));if(saved){
     if(JSON.stringify(saved.assets.map(a=>a.id))!==JSON.stringify(nextData.assets.map(a=>a.id)))throw Error();
+    if(!Object.hasOwn(saved,'scenarios'))saved.scenarios=createScenarios(saved.assets);
     validateState(saved);nextState=saved;
   }}catch{/* incompatible saved state is ignored */}
   validateState(nextState);
@@ -69,7 +73,7 @@ function install(raw,restore=true){
   chosen='current';selectedAssetIndex=null;renderInputs();recalculate();renderAllocationInputs();renderHistory();renderHedge();
 }
 function recalculate(){
-  const optimized=validateState(state);cov=covariance(state.assets,state.correlation);
+  const optimized=validateState(state);cov=aggregateScenarios(state.assets,state.correlation,state.scenarios).covariance;
   results={current:stats(state.assets.map(a=>a.weight),state.assets,cov,state.rf),...optimized,taa1:stats(state.taa1,state.assets,cov,state.rf),taa2:stats(state.taa2,state.assets,cov,state.rf)};
   cloud=samplePortfolios(state.assets,cov,state.rf,state.policy,{count:2400,seed:42719}).sort((a,b)=>a.sharpe-b.sharpe);
   exploredIndex=Math.min(exploredIndex,Math.max(0,cloud.length-1));
@@ -228,6 +232,7 @@ function readTaa(){
   const next=clone(state);
   document.querySelectorAll('[data-taa]').forEach(el=>{next[el.dataset.taa][Number(el.dataset.asset)]=numberInput(el,'TAA 비중')/100;});
   document.querySelectorAll('[data-taa-moment]').forEach(el=>{if(el.value!==el.dataset.baseline)next.assets[Number(el.dataset.asset)][el.dataset.taaMoment]=numberInput(el,'TAA 투자 가정');});
+  next.scenarios=remapScenarios(state.scenarios,state.assets,next.assets);
   validateState(next);return next;
 }
 function renderAllocationInputs(policy=state.policy,taa=state,section='all'){
@@ -276,23 +281,36 @@ function setupAllocationEvents(){
   $('saaSave').onclick=()=>{clearError();try{const policy=readPolicy();state.saaPresets[Number($('saaPreset').value)||0]=clone(policy);storageSave();message('SAA 입력을 저장했습니다.');}catch(e){message(e.message,true);}};
   $('saaLoad').onclick=()=>{clearError();try{const saved=state.saaPresets[Number($('saaPreset').value)||0];if(!saved)throw Error('저장된 SAA가 없습니다.');validatePolicy(state.assets,saved);renderAllocationInputs(saved,state,'saa');message('SAA 입력을 불러왔습니다. 제약 적용으로 반영하십시오.');}catch(e){message(e.message,true);}};
   $('taaSave').onclick=()=>{clearError();try{const next=readTaa();state.taaPresets[Number($('taaPreset').value)||0]={taa1:next.taa1,taa2:next.taa2,assets:next.assets.map(a=>({mu:a.mu,vol:a.vol}))};storageSave();message('TAA 입력을 저장했습니다.');}catch(e){message(e.message,true);}};
-  $('taaLoad').onclick=()=>{clearError();try{const saved=state.taaPresets[Number($('taaPreset').value)||0];if(!saved)throw Error('저장된 TAA가 없습니다.');const next={...clone(state),taa1:saved.taa1,taa2:saved.taa2,assets:state.assets.map((a,i)=>({...a,...saved.assets[i]}))};validateState(next);renderAllocationInputs(state.policy,next,'taa');message('TAA 입력을 불러왔습니다. 비중·가정 적용으로 반영하십시오.');}catch(e){message(e.message,true);}};
+  $('taaLoad').onclick=()=>{clearError();try{const saved=state.taaPresets[Number($('taaPreset').value)||0];if(!saved)throw Error('저장된 TAA가 없습니다.');const next={...clone(state),taa1:saved.taa1,taa2:saved.taa2,assets:state.assets.map((a,i)=>({...a,...saved.assets[i]}))};next.scenarios=remapScenarios(state.scenarios,state.assets,next.assets);validateState(next);renderAllocationInputs(state.policy,next,'taa');message('TAA 입력을 불러왔습니다. 비중·가정 적용으로 반영하십시오.');}catch(e){message(e.message,true);}};
 }
 
 function renderInputs(){
-  $('assetInputs').innerHTML=state.assets.map((a,i)=>`<tr><td><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(a.name)}</td>${['mu','vol','weight'].map(f=>{const value=(f==='weight'?a[f]*100:a[f]).toFixed(2);return `<td><input type="number" data-i="${i}" data-field="${f}" data-baseline="${value}" step=".01" value="${value}" aria-label="${esc(a.name)} ${f==='mu'?'수익률':f==='vol'?'변동성':'현재 비중'}"></td>`;}).join('')}</tr>`).join('');
+  $('assetInputs').innerHTML=state.assets.map((a,i)=>`<tr><th scope="row"><i class="legend-dot" style="background:${colors[i%colors.length]}"></i>${esc(a.name)}</th>${state.scenarios.map((scenario,s)=>['mu','vol'].map(f=>{const value=scenario.assets[i][f].toFixed(2);return `<td><input type="number" data-i="${i}" data-scenario="${s}" data-field="${f}" data-baseline="${value}" step=".01" ${f==='vol'?'min="0.01"':''} value="${value}" aria-label="${esc(a.name)} ${SCENARIOS[s].label} ${f==='mu'?'수익률':'변동성'} %"></td>`;}).join('')).join('')}<td class="cma-combined" id="cma-mu-${i}">${fmt(a.mu)}</td><td class="cma-combined" id="cma-vol-${i}">${fmt(a.vol)}</td></tr>`).join('');
+  document.querySelectorAll('[data-probability]').forEach(el=>{const percent=state.scenarios[Number(el.dataset.probability)].probability*100;const value=Math.abs(percent-Number(percent.toFixed(2)))<1e-10?percent.toFixed(2):fmtInput(percent);el.value=value;el.dataset.baseline=value;el.oninput=updateCmaDraft;});
   $('correlationInputs').innerHTML=`<table><thead><tr><th>자산</th>${state.assets.map((a,i)=>`<th>${i+1}</th>`).join('')}</tr></thead><tbody>${state.assets.map((a,i)=>`<tr><td>${i+1}. ${esc(a.name)}</td>${state.assets.map((b,j)=>`<td>${i===j?'1.00':j>i?`<input type="number" step=".001" min="-1" max="1" data-corr="${i},${j}" data-baseline="${state.correlation[i][j].toFixed(3)}" value="${state.correlation[i][j].toFixed(3)}" aria-label="${esc(a.name)} / ${esc(b.name)} 상관계수">`:`<span id="corr-${i}-${j}" class="small">${fmt(state.correlation[i][j],3)}</span>`}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-  document.querySelectorAll('[data-corr]').forEach(el=>el.oninput=()=>{const [i,j]=el.dataset.corr.split(',');$(`corr-${j}-${i}`).textContent=el.value;});
-  document.querySelectorAll('[data-field=weight]').forEach(el=>el.oninput=updateWeightSum);
-  $('riskFreeInput').value=state.rf;updateWeightSum();
+  document.querySelectorAll('[data-corr]').forEach(el=>el.oninput=()=>{const [i,j]=el.dataset.corr.split(',');$(`corr-${j}-${i}`).textContent=el.value;updateCmaDraft();});
+  document.querySelectorAll('[data-field]').forEach(el=>el.oninput=updateCmaDraft);
+  $('riskFreeInput').value=state.rf;updateCmaDraft();
 }
-function updateWeightSum(){const sum=[...document.querySelectorAll('[data-field=weight]')].reduce((s,el)=>s+Number(el.value),0);$('weightSum').textContent=`비중 합계 ${fmt(sum)}%`;$('weightSum').classList.toggle('warn',Math.abs(sum-100)>.00001);}
+function readCmaDraft(){
+  const next=clone(state);
+  document.querySelectorAll('[data-probability]').forEach(el=>{if(el.value!==el.dataset.baseline)next.scenarios[Number(el.dataset.probability)].probability=numberInput(el,el.getAttribute('aria-label'))/100;});
+  document.querySelectorAll('[data-field]').forEach(el=>{if(el.value!==el.dataset.baseline)next.scenarios[Number(el.dataset.scenario)].assets[Number(el.dataset.i)][el.dataset.field]=numberInput(el,el.getAttribute('aria-label'));});
+  document.querySelectorAll('[data-corr]').forEach(el=>{if(el.value===el.dataset.baseline)return;const[i,j]=el.dataset.corr.split(',').map(Number);const v=numberInput(el,'상관계수');next.correlation[i][j]=next.correlation[j][i]=v;});
+  next.assets=aggregateScenarios(next.assets,next.correlation,next.scenarios).assets;
+  return next;
+}
+function updateCmaDraft(){
+  const fields=[...document.querySelectorAll('[data-probability]')],values=fields.map(el=>el.value.trim()===''?NaN:Number(el.value));
+  const sum=values.reduce((a,b)=>a+b,0),valid=values.every(x=>Number.isFinite(x)&&x>=0&&x<=100)&&Math.abs(sum-100)<=1e-6;
+  $('probabilitySum').textContent=`확률 합계 ${fmt(sum)}%`;$('probabilitySum').classList.toggle('warn',!valid);
+  try{const next=readCmaDraft();next.assets.forEach((a,i)=>{$(`cma-mu-${i}`).textContent=fmt(a.mu);$(`cma-vol-${i}`).textContent=fmt(a.vol);});$('cmaDraftStatus').textContent='';$('cmaDraftStatus').classList.toggle('warn',false);}
+  catch(error){state.assets.forEach((_,i)=>{$(`cma-mu-${i}`).textContent='—';$(`cma-vol-${i}`).textContent='—';});$('cmaDraftStatus').textContent=error.message;$('cmaDraftStatus').classList.toggle('warn',true);}
+}
 function applyInputs(){
   clearError();try{
-    const next=clone(state);document.querySelectorAll('[data-field]').forEach(el=>{if(el.value===el.dataset.baseline)return;let v=numberInput(el,el.getAttribute('aria-label'));if(el.dataset.field==='weight')v/=100;next.assets[Number(el.dataset.i)][el.dataset.field]=v;});
-    document.querySelectorAll('[data-corr]').forEach(el=>{if(el.value===el.dataset.baseline)return;const[i,j]=el.dataset.corr.split(',').map(Number);const v=numberInput(el,'상관계수');next.correlation[i][j]=next.correlation[j][i]=v;});
-    next.rf=numberInput($('riskFreeInput'),'무위험금리');next.edited=true;validateInputs(next.assets,next.correlation);stats(next.assets.map(a=>a.weight),next.assets,covariance(next.assets,next.correlation),next.rf);
-    validateState(next);
+    const next=readCmaDraft();
+    next.rf=numberInput($('riskFreeInput'),'무위험금리');next.edited=true;validateState(next);
     state=next;recalculate();renderInputs();renderAllocationInputs(state.policy,state,'taa');storageSave();setTab('overview');message('투자 가정을 적용했습니다.');
   }catch(e){message(e.message,true);}
 }
@@ -338,7 +356,6 @@ document.querySelector('.brand').onclick=e=>{e.preventDefault();setTab('overview
 $('coverage').onchange=renderCards;
 $('applyButton').onclick=applyInputs;
 $('targetApply').onclick=()=>{clearError();try{const nextTarget=numberInput($('targetInput'),'목표수익률');optimizeAllocation(state.assets,cov,state.rf,nextTarget,state.policy);state.target=nextTarget;recalculate();storageSave();if(results.target){chosen='target';renderSelection();message('목표 포트폴리오를 계산했습니다.');}else message('목표수익률이 달성 가능 범위를 벗어났습니다.',true);}catch(e){message(e.message,true);}};
-$('normalizeButton').onclick=()=>{try{const fields=[...document.querySelectorAll('[data-field=weight]')],v=fields.map(el=>numberInput(el,'비중'));const sum=v.reduce((a,b)=>a+b,0);if(sum<=0||v.some(x=>x<0))throw Error('0 이상의 비중을 입력하고 합계가 양수인지 확인하십시오.');fields.forEach((el,i)=>el.value=String(v[i]/sum*100));updateWeightSum();}catch(e){message(e.message,true);}};
 $('resetButton').onclick=()=>{clearError();state=clone(initial);renderInputs();recalculate();renderAllocationInputs();storageSave();message('초기 가정을 복원했습니다.');};
 document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{period=Number(b.dataset.period);document.querySelectorAll('[data-period]').forEach(p=>p.classList.toggle('active',p===b));renderHistory();});
 $('importFile').onchange=async e=>{clearError();const file=e.target.files[0];if(!file)return;try{if(file.size>5e6)throw Error('JSON 파일은 5MB 이하여야 합니다.');const raw=JSON.parse(await file.text());normalizeData(raw);install(raw,false);message('새 데이터 스냅샷을 적용했습니다. 새로고침 시 원래 스냅샷으로 돌아갑니다.');}catch(err){message('데이터를 불러오지 못했습니다: '+err.message,true);}finally{e.target.value='';}};

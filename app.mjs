@@ -5,6 +5,8 @@ import { renderRiskMarkup } from './risk.mjs';
 import { defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios } from './allocation.mjs';
 import { frontierTarget } from './frontier-target.mjs';
 import { initDataInfoUI } from './data-info-ui.mjs';
+import { mountHedgeAnalytics } from './hedge-analytics.mjs';
+import { mountFxWorkspace } from './fx-workspace.mjs';
 
 const $ = id => document.getElementById(id);
 const colors = ['#bddb9c','#80b6a5','#d7bb86','#87a6c0','#b5a5c7','#b68e81','#7ec9cf'];
@@ -15,7 +17,8 @@ const zValues = {'.68':0.994457883,'.9':1.644853627,'.95':1.959963985,'.99':2.57
 const fmt = (x,n=2) => Number.isFinite(x) ? x.toLocaleString('ko-KR',{minimumFractionDigits:n,maximumFractionDigits:n}) : '—';
 const esc = x => String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data, initial, state, results, cov, chosen='current', period=60, toastTimer, cacheKey, fxSnapshot=normalizeFxHedge(null), cloud=[], exploredIndex=0, selectedAssetIndex=null, frontierMode='same-risk', frontierComparison=null, frontierAxes={};
-const dataInfoUI=initDataInfoUI({document,onHedge:next=>{fxSnapshot=next;renderHedge();}});
+const hedgeAnalytics=mountHedgeAnalytics(document),fxWorkspace=mountFxWorkspace(document);
+const dataInfoUI=initDataInfoUI({document,onHedge:next=>{fxSnapshot=next;renderHedge();},onAnalytics:next=>{hedgeAnalytics?.install(next);fxWorkspace?.installAnalytics(next);},onModel:(next,options)=>fxWorkspace?.installModel(next,options)});
 
 function normalizeData(raw) {
   if(!raw || !Array.isArray(raw.assets) || raw.assets.length<2 || raw.assets.length>8) throw Error('자산 수는 2~8개여야 합니다.');
@@ -62,7 +65,7 @@ function install(raw,restore=true){
   }}catch{/* incompatible saved state is ignored */}
   validateState(nextState);
   data=nextData;initial=nextInitial;state=nextState;cacheKey=nextKey;
-  if(Object.hasOwn(data,'fxHedge') || !dataInfoUI.getSnapshot()) fxSnapshot=normalizeFxHedge(data.fxHedge);
+  if(Object.hasOwn(data,'fxHedge') || !dataInfoUI.getSnapshot()){fxSnapshot=normalizeFxHedge(data.fxHedge);hedgeAnalytics?.install(null);}
   chosen='current';selectedAssetIndex=null;renderInputs();recalculate();renderAllocationInputs();renderHistory();renderHedge();
 }
 function recalculate(){
@@ -311,7 +314,7 @@ function setTab(tab){
   if(!['overview','assumptions','risk','hedge','fxmodel'].includes(tab))tab='overview';
   document.querySelectorAll('.tab-panel').forEach(el=>el.hidden=el.id!==tab);
   document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
-  const titles={overview:'포트폴리오 대시보드<span>.</span>',assumptions:'Capital Market Assumption',risk:'리스크',hedge:'환헤지',fxmodel:'환율모형'};
+  const titles={overview:'포트폴리오 대시보드<span>.</span>',assumptions:'Capital Market Assumption',risk:'리스크',hedge:'환헤지',fxmodel:'Currency'};
   $('pageTitle').innerHTML=titles[tab];
   if(tab==='overview'){renderFrontier();renderHistory();}
 }
@@ -325,8 +328,9 @@ $('hedgeImportFile').onchange=async event=>{
   try{
     if(file.size>5e6)throw Error('JSON 파일은 5MB 이하여야 합니다.');
     const raw=JSON.parse(await file.text());
-    const next=normalizeFxHedge(raw.fxHedge??raw);
-    fxSnapshot=next;renderHedge();message('환헤지 데이터 적용 · 새로고침 시 초기화');
+    if(raw.kind==='bje_data_info')dataInfoUI.apply(raw);
+    else{const next=normalizeFxHedge(raw.fxHedge??raw);fxSnapshot=next;renderHedge();hedgeAnalytics?.install(null);}
+    message('환헤지 데이터 적용 · 새로고침 시 초기화');
   }catch(error){message('환헤지 데이터를 불러오지 못했습니다: '+error.message,true);}
   finally{event.target.value='';}
 };
@@ -340,7 +344,12 @@ document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{period=Numb
 $('importFile').onchange=async e=>{clearError();const file=e.target.files[0];if(!file)return;try{if(file.size>5e6)throw Error('JSON 파일은 5MB 이하여야 합니다.');const raw=JSON.parse(await file.text());normalizeData(raw);install(raw,false);message('새 데이터 스냅샷을 적용했습니다. 새로고침 시 원래 스냅샷으로 돌아갑니다.');}catch(err){message('데이터를 불러오지 못했습니다: '+err.message,true);}finally{e.target.value='';}};
 try{const response=await fetch('./data.json',{cache:'no-store'});if(!response.ok)throw Error('data');install(await response.json());}catch(e){install(demoData);message('데이터 스냅샷을 읽지 못해 예시 가정으로 시작합니다.',true);}
 const embeddedInfo=$('dataInfoEmbedded');
-if(embeddedInfo?.textContent){try{dataInfoUI.apply(JSON.parse(embeddedInfo.textContent));}catch(error){$('dataInfoError').textContent='시장자료 초기화 오류 · '+error.message;$('dataInfoError').hidden=false;}}
+const showInfoError=error=>{$('dataInfoError').textContent='시장자료 초기화 오류 · '+error.message;$('dataInfoError').hidden=false;};
+if(embeddedInfo?.textContent){try{dataInfoUI.apply(JSON.parse(embeddedInfo.textContent));}catch(error){showInfoError(error);}}
+else{
+  // Published by hahajongha/for_data from its private data_info workbook; absent until the first publish.
+  try{const response=await fetch('./data/market.json',{cache:'no-store'});if(response.ok)dataInfoUI.apply(await response.json());}catch(error){showInfoError(error);}
+}
 
 if(typeof ResizeObserver!=='undefined'){
   const widths=new WeakMap();

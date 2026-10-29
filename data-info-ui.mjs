@@ -1,4 +1,7 @@
 import { normalizeFxHedge } from './fx-hedge.mjs';
+import { normalizeHedgeAnalytics } from './hedge-analytics.mjs';
+import { normalizeFxAnalyticsSpots } from './fx-workspace.mjs';
+import { normalizeFxModel, prepareFxSimulation } from './fx-model-ui.mjs';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (value, digits=2) => Number.isFinite(value) ? value.toLocaleString('ko-KR', {minimumFractionDigits:digits, maximumFractionDigits:digits}) : '—';
@@ -85,7 +88,23 @@ export function normalizeDataInfo(raw) {
     checkDate(pair.asOf,'프리미엄 관측일',meta.latestObservation);
     checkDate(pair.volAsOf,'환 변동성 관측일',meta.latestObservation);
   }
-  return {kind:'bje_data_info',schemaVersion:1,meta,market,bond,fxHedge};
+  let fxAnalytics=null,fxModel=null;
+  if(raw.fxAnalytics!=null){
+    const hedge=normalizeHedgeAnalytics(raw.fxAnalytics),fx=normalizeFxAnalyticsSpots(raw.fxAnalytics);
+    if(hedge.asOf!==asOf)throw Error('Hedge·FX 분석자료 기준일이 일치하지 않습니다.');
+    fxAnalytics={...hedge,spots:fx.spots};
+    for(const pair of hedge.ratePairs)for(const row of pair.history)if(row.date>meta.latestObservation)throw Error('금리차 비교의 관측일을 확인하십시오.');
+    for(const spot of fx.spots)for(const row of spot.history)if(row.date>meta.latestObservation)throw Error('FX 모니터링의 관측일을 확인하십시오.');
+  }
+  if(raw.fxModel!=null){
+    fxModel=normalizeFxModel(raw.fxModel);
+    if(fxModel.meta.asOf>meta.latestObservation)throw Error('FX 모형의 기준일을 확인하십시오.');
+    const modelHash=raw.fxModel.meta.provenance?.primary?.sha256;
+    if(modelHash!=null&&modelHash!==meta.sha256)throw Error('FX 모형과 시장자료의 원본 해시가 일치하지 않습니다.');
+    const usd=new Map((fxAnalytics?.spots.find(s=>s.id==='usdkrw')?.history??[]).map(r=>[r.date,r.value]));
+    for(const row of fxModel.history)if(usd.size&&(!usd.has(row.date)||Math.abs(usd.get(row.date)-row.spot)>1e-8))throw Error('FX 모형과 모니터링의 원/달러 관측값이 일치하지 않습니다.');
+  }
+  return {kind:'bje_data_info',schemaVersion:1,meta,market,bond,fxHedge,fxAnalytics,fxModel};
 }
 
 export function renderMarketMarkup(snapshot) {
@@ -122,16 +141,32 @@ export function renderBondMarkup(bond) {
   return `<article class="panel info-bond-panel"><div class="panel-heading"><h2>${esc(bond.name)} <span class="pill">과거 실적</span></h2><span class="small">${esc(bond.asOf)} · ${esc(bond.source)}</span></div><div class="info-bond-grid">${stats.map(([label,value,unit])=>`<div class="info-bond-metric"><span>${label}</span><strong>${fmt(value)}<small>${unit}</small></strong></div>`).join('')}</div><div class="info-bond-chart chart-wrap">${chart}</div><div class="info-chart-meta"><span>${esc(bond.periodStart || '—')} ~ ${esc(bond.periodEnd || '—')} · ${bond.observations}개월 수익률</span><span>월말 · 시작값 100</span></div></article>`;
 }
 
+const hedgeTenors = {average:'평균', hedge3m:'3M', hedge6m:'6M', hedge12m:'12M'};
+
+export function selectHedgeSeries(pair, tenor='average') {
+  if (!Object.hasOwn(hedgeTenors, tenor)) throw Error('프리미엄 만기를 확인하십시오.');
+  if (!pair) return {history:[], current:null};
+  if (tenor !== 'average') return {
+    history:(pair.tenorHistory ?? []).filter(row=>Number.isFinite(row[tenor])).map(row=>({date:row.date,value:row[tenor]})),
+    current:Number.isFinite(pair[tenor])?pair[tenor]:null,
+  };
+  const values=[pair.hedge3m,pair.hedge6m,pair.hedge12m];
+  return {history:pair.history ?? [],current:values.every(Number.isFinite)?values.reduce((sum,value)=>sum+value/3,0):null};
+}
+
 export function buildHistogram(history, current=null, years='5', asOf=history.at(-1)?.date) {
-  if (!dateOK(asOf)) return {rows:[],bins:[],current,min:0,max:1};
+  if (!['1','3','5','all'].includes(String(years))) throw Error('분포 조회 기간을 확인하십시오.');
+  const noData={rows:[],bins:[],current,min:0,max:1,mean:null,std:null,percentile:null};
+  if (!dateOK(asOf)) return noData;
   let cutoff = '0000-01-01';
   if (years !== 'all') {
-    if (!['1','3','5'].includes(String(years))) throw Error('분포 조회 기간을 확인하십시오.');
     const date = new Date(asOf);date.setUTCFullYear(date.getUTCFullYear()-Number(years));cutoff=date.toISOString().slice(0,10);
   }
   const rows=history.filter(row=>row.date>=cutoff&&row.date<=asOf);
-  if(!rows.length)return {rows,bins:[],current,min:0,max:1};
+  if(!rows.length)return noData;
   const values=rows.map(row=>row.value),bound=Number.isFinite(current)?[...values,current]:values;
+  const mean=values.reduce((sum,value)=>sum+value/values.length,0);
+  const std=values.length>1?Math.sqrt(values.reduce((sum,value)=>sum+(value-mean)**2,0)/(values.length-1)):null;
   let min=Math.min(...bound),max=Math.max(...bound);
   if(max-min<1e-10) { const pad=Math.max(.05,Math.abs(min)*.05);min-=pad;max+=pad; }
   else {const pad=(max-min)*.06;min-=pad;max+=pad;}
@@ -139,18 +174,38 @@ export function buildHistogram(history, current=null, years='5', asOf=history.at
   const width=(max-min)/count,bins=Array.from({length:count},(_,i)=>({lower:min+i*width,upper:min+(i+1)*width,count:0}));
   for(const value of values)bins[Math.max(0,Math.min(count-1,Math.floor((value-min)/width)))].count++;
   const percentile=Number.isFinite(current)?100*values.filter(v=>v<=current).length/values.length:null;
-  return {rows,bins,current,min,max,percentile};
+  return {rows,bins,current,min,max,mean,std,percentile};
 }
 
-export function renderHistogramMarkup(snapshot, years='5') {
+function historyChart(result, currency, tenor, suffix) {
+  if(!result.rows.length)return empty('과거 관측값 없음');
+  const W=520,H=245,L=54,R=26,T=25,B=42;
+  const rows=result.rows,dates=rows.map(row=>Date.parse(row.date));
+  const first=dates[0],span=dates.at(-1)-first;
+  const x=date=>span?L+(date-first)/span*(W-L-R):(W+L-R)/2;
+  const y=value=>H-B-(value-result.min)/(result.max-result.min)*(H-T-B);
+  let svg='';
+  for(let i=0;i<=4;i++) {const value=result.min+(result.max-result.min)*i/4;svg+=`<line x1="${L}" x2="${W-R}" y1="${y(value)}" y2="${y(value)}" stroke="#2b3b30"/><text x="${L-9}" y="${y(value)+4}" text-anchor="end" font-size="13">${fmt(value)}</text>`;}
+  if(result.min<0&&result.max>0)svg+=`<line x1="${L}" x2="${W-R}" y1="${y(0)}" y2="${y(0)}" stroke="#809187" stroke-dasharray="3 4"/>`;
+  const points=rows.map((row,index)=>`${index?'L':'M'}${x(dates[index])},${y(row.value)}`).join(' ');
+  svg+=`<path d="${points}" fill="none" stroke="#a5c7bd" stroke-width="2"/>`;
+  const latest=rows.at(-1);
+  svg+=`<circle cx="${x(dates.at(-1))}" cy="${y(latest.value)}" r="4" fill="#e8c78c"><title>${esc(latest.date)} · ${fmt(latest.value)}${suffix}</title></circle>`;
+  const ticks=[...new Set(Array.from({length:3},(_,i)=>Math.round((rows.length-1)*i/2)))];
+  for(const index of ticks)svg+=`<text x="${x(dates[index])}" y="${H-13}" text-anchor="${index===0&&rows.length>1?'start':index===rows.length-1&&rows.length>1?'end':'middle'}" font-size="13">${esc(rows[index].date)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${currency} ${hedgeTenors[tenor]} 프리미엄 시계열">${svg}</svg>`;
+}
+
+export function renderHistogramMarkup(snapshot, years='5', tenor='average', view='distribution') {
+  if(!['distribution','history'].includes(view))throw Error('프리미엄 차트 표시를 확인하십시오.');
   return currencies.map(currency=> {
     const pair=snapshot?.pairs.find(row=>row.currency===currency);
-    const tenors=pair?[pair.hedge3m,pair.hedge6m,pair.hedge12m]:[];
-    const current=tenors.length===3&&tenors.every(Number.isFinite)?tenors.reduce((sum,value)=>sum+value/3,0):null;
-    const result=buildHistogram(pair?.history??[],current,years,pair?.asOf);
+    const {history,current}=selectHedgeSeries(pair,tenor);
+    const result=buildHistogram(history,current,years,pair?.asOf);
     const suffix=snapshot?.unit==='source_value'?'':'%';
     let chart=empty('과거 관측값 없음');
-    if(result.bins.length) {
+    if(view==='history') chart=historyChart(result,currency,tenor,suffix);
+    else if(result.bins.length) {
       const W=520,H=245,L=45,R=20,T=32,B=42;
       const x=v=>L+(v-result.min)/(result.max-result.min)*(W-L-R);
       const peak=Math.max(...result.bins.map(bin=>bin.count));
@@ -161,32 +216,51 @@ export function renderHistogramMarkup(snapshot, years='5') {
       for(let i=0;i<=4;i++) { const value=result.min+(result.max-result.min)*i/4;svg+=`<text x="${x(value)}" y="${H-13}" text-anchor="middle" font-size="13">${fmt(value,1)}</text>`; }
       if(Number.isFinite(current))svg+=`<line x1="${x(current)}" x2="${x(current)}" y1="${T-5}" y2="${H-B}" stroke="#e8c78c" stroke-width="2" stroke-dasharray="5 3"/><circle cx="${x(current)}" cy="${T-5}" r="4" fill="#e8c78c"/>`;
       svg+=`<text x="${L}" y="17" font-size="13">관측일 수</text>`;
-      chart=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${currency} 3만기 평균 프리미엄 분포">${svg}</svg>`;
+      chart=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${currency} ${hedgeTenors[tenor]} 프리미엄 분포">${svg}</svg>`;
     }
-    return `<article class="panel info-histogram"><div class="panel-heading"><h3>${currency}</h3><span class="info-current">최근 ${fmt(current)}${suffix}</span></div><div class="chart-wrap">${chart}</div><div class="info-chart-meta"><span>${result.rows.length?`${esc(result.rows[0].date)} ~ ${esc(result.rows.at(-1).date)}`:'관측기간 없음'} · ${result.rows.length.toLocaleString('ko-KR')}일</span><span>이하 비율 ${fmt(result.percentile)}%</span></div><div class="info-meta">${esc(pair?.source||'자료 미연결')} · 최근 ${esc(pair?.asOf||'—')}</div></article>`;
+    const metrics=[['최근',current,suffix],['기간 평균',result.mean,suffix],['표본 σ',result.std,suffix],['최근값 이하',result.percentile,'%']];
+    return `<article class="panel info-histogram"><div class="panel-heading"><h3>${currency}</h3><span class="info-current">${hedgeTenors[tenor]}</span></div><div class="hedge-history-metrics">${metrics.map(([label,value,unit])=>`<div><span>${label}${unit?` (${unit})`:''}</span><strong>${fmt(value)}</strong></div>`).join('')}</div><div class="chart-wrap">${chart}</div><div class="info-chart-meta"><span>${result.rows.length?`${esc(result.rows[0].date)} ~ ${esc(result.rows.at(-1).date)}`:'관측기간 없음'} · ${result.rows.length.toLocaleString('ko-KR')}일</span></div><div class="info-meta">${esc(pair?.source||'자료 미연결')} · 최근 ${esc(pair?.asOf||'—')}</div></article>`;
   }).join('');
 }
 
-export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{}}={}) {
+export function hedgeHistoryCSV(snapshot, years='5', tenor='average') {
+  const rows=[['date','currency','tenor','premium','unit']];
+  for(const currency of currencies) {
+    const pair=snapshot?.pairs.find(row=>row.currency===currency);
+    const series=selectHedgeSeries(pair,tenor);
+    const selected=buildHistogram(series.history,series.current,years,pair?.asOf);
+    for(const row of selected.rows)rows.push([row.date,currency,tenor==='average'?'average':hedgeTenors[tenor],row.value,snapshot.unit]);
+  }
+  if(rows.length===1)return '';
+  return '\ufeff'+rows.map(row=>row.join(',')).join('\r\n');
+}
+
+export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{},onAnalytics=()=>{},onModel=()=>{}}={}) {
   const $=id=>doc.getElementById(id);
-  let snapshot=null,hedge=normalizeFxHedge(null),years='5';
+  let snapshot=null,hedge=normalizeFxHedge(null),years='5',tenor='average',view='distribution';
   function renderHedge(next) {
     hedge=next;
     $('hedgeUnit').textContent=next.unit==='source_value'?'프리미엄 · 원자료 단위':'연 % · + 수취 / − 지급';
-    $('hedgeHistoryUnit').textContent=next.unit==='source_value'?'3M·6M·12M 평균 · 원자료 단위':'3M·6M·12M 평균 · 연 %';
-    $('hedgeHistograms').innerHTML=renderHistogramMarkup(next,years);
+    $('hedgeHistoryUnit').textContent=`${tenor==='average'?'3M·6M·12M 평균':hedgeTenors[tenor]} · ${next.unit==='source_value'?'원자료 단위':'연 %'}`;
+    $('hedgeHistograms').innerHTML=renderHistogramMarkup(next,years,tenor,view);
+    if($('hedgeHistoryCSV'))$('hedgeHistoryCSV').disabled=!next.pairs.some(pair=>{const series=selectHedgeSeries(pair,tenor);return buildHistogram(series.history,series.current,years,pair.asOf).rows.length;});
   }
   function apply(raw) {
     const next=normalizeDataInfo(raw);
     const marketMarkup=renderMarketMarkup(next),bondMarkup=renderBondMarkup(next.bond);
     // Validate and render all fragments before replacing the prior loaded snapshot.
-    renderHistogramMarkup(next.fxHedge,years);
+    renderHistogramMarkup(next.fxHedge,years,tenor,view);
+    // Simulation can reject numerically unsafe parameters after schema validation.
+    // Complete it before any panel or callback receives the replacement dataset.
+    if(next.fxModel)next.fxModel=prepareFxSimulation(next.fxModel);
     snapshot=next;
     $('dataInfoSource').textContent=`${next.meta.source} · 기준 ${next.meta.asOf} · 최근 ${next.meta.latestObservation}`;
     $('marketSnapshot').innerHTML=marketMarkup;
     $('bondReference').innerHTML=bondMarkup;
     onHedge(next.fxHedge);
     renderHedge(next.fxHedge);
+    onAnalytics(next.fxAnalytics);
+    onModel(next.fxModel,{prepared:true});
     $('dataInfoError').hidden=true;
     return next;
   }
@@ -204,6 +278,20 @@ export function initDataInfoUI({document:doc=globalThis.document,onHedge=()=>{}}
     const next=$('hedgeHistoryPeriod').value;
     if(!['1','3','5','all'].includes(next))return;
     years=next;renderHedge(hedge);
+  };
+  if($('hedgeHistoryTenor'))$('hedgeHistoryTenor').onchange=()=>{
+    const next=$('hedgeHistoryTenor').value;if(!Object.hasOwn(hedgeTenors,next))return;
+    tenor=next;renderHedge(hedge);
+  };
+  if($('hedgeHistoryView'))$('hedgeHistoryView').onchange=()=>{
+    const next=$('hedgeHistoryView').value;if(!['distribution','history'].includes(next))return;
+    view=next;renderHedge(hedge);
+  };
+  if($('hedgeHistoryCSV'))$('hedgeHistoryCSV').onclick=()=>{
+    const csv=hedgeHistoryCSV(hedge,years,tenor);if(!csv)return;
+    const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'})),link=doc.createElement('a');
+    link.href=url;link.download=`BJE_Hedge_${tenor}_${years==='all'?'ALL':years+'Y'}.csv`;link.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
   };
   $('marketSnapshot').innerHTML=renderMarketMarkup(null);
   $('bondReference').innerHTML=renderBondMarkup(null);

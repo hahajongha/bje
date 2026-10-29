@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111a19"><meta name="description" content="BJE Portfolio Lab — 자산배분, 효율적 경계선, 위험기여도 분석">
-  <title>BJE · Portfolio Lab</title><link rel="stylesheet" href="styles.css">
   <link rel="icon" href="favicon.ico?v=day-sheep-1" sizes="16x16 32x32 48x48" type="image/x-icon">
   <link rel="icon" href="favicon-32.png?v=day-sheep-1" sizes="32x32" type="image/png">
   <link rel="icon" href="favicon.svg?v=day-sheep-1" sizes="any" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon.png?v=day-sheep-1" sizes="180x180">
+  <title>BJE · Portfolio Lab</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="hedge-analytics.css"><link rel="stylesheet" href="fx-workspace.css">
 </head>
 <body>
 <aside class="sidebar">
@@ -18,7 +18,7 @@
     <button class="nav-item" data-tab="risk">Risk</button>
     <button class="nav-item" data-tab="assumptions">CMA</button>
     <button class="nav-item" data-tab="hedge">Hedge</button>
-    <button class="nav-item" data-tab="fxmodel">FX</button>
+    <button class="nav-item" data-tab="fxmodel">Currency</button>
   </nav>
 </aside>
 <div class="shell">
@@ -82,15 +82,14 @@
           <input type="file" id="hedgeImportFile" accept=".json,application/json" hidden>
           <div id="hedgeGrid" class="hedge-grid"></div>
         </article>
-        <div class="section-heading info-distribution-heading"><div><h2>과거 프리미엄 분포</h2><span id="hedgeHistoryUnit" class="small">3M·6M·12M 평균 · 연 %</span></div><div class="inline-control"><span class="info-marker-label">최근값</span><label for="hedgeHistoryPeriod">조회 기간</label><select id="hedgeHistoryPeriod"><option value="1">1Y</option><option value="3">3Y</option><option value="5" selected>5Y</option><option value="all">전체</option></select></div></div>
+        <div class="section-heading info-distribution-heading"><div><h2>과거 프리미엄</h2><span id="hedgeHistoryUnit" class="small">3M·6M·12M 평균 · 연 %</span></div><div class="hedge-history-controls"><div class="inline-control"><label for="hedgeHistoryTenor">만기</label><select id="hedgeHistoryTenor"><option value="average" selected>평균</option><option value="hedge3m">3M</option><option value="hedge6m">6M</option><option value="hedge12m">12M</option></select></div><div class="inline-control"><label for="hedgeHistoryPeriod">기간</label><select id="hedgeHistoryPeriod"><option value="1">1Y</option><option value="3">3Y</option><option value="5" selected>5Y</option><option value="all">전체</option></select></div><div class="inline-control"><label for="hedgeHistoryView">차트</label><select id="hedgeHistoryView"><option value="distribution" selected>분포</option><option value="history">시계열</option></select></div><button id="hedgeHistoryCSV" class="button secondary" type="button" disabled>CSV</button></div></div>
         <div id="hedgeHistograms" class="info-histogram-grid"></div>
       </div>
-      <div id="hedge-modelA" class="hedge-panel" hidden><article class="panel hedge-model-empty"><h2>환헤지모델A</h2><span class="small">모형 미설정</span></article></div>
+      <div id="hedge-modelA" class="hedge-panel" hidden><div id="hedgeAnalyticsHost"></div></div>
       <div id="hedge-modelB" class="hedge-panel" hidden><article class="panel hedge-model-empty"><h2>환헤지모델B</h2><span class="small">모형 미설정</span></article></div>
     </section>
-    <section id="fxmodel" class="tab-panel" hidden><div id="fxModelHost"></div></section>
+    <section id="fxmodel" class="tab-panel" hidden><div id="fxWorkspaceHost"></div></section>
   </main>
 </div><div id="toast" role="status" hidden></div>
 <script type="module" src="app.mjs"></script>
-<script type="module" src="fx-model-ui.mjs"></script>
 </body></html>

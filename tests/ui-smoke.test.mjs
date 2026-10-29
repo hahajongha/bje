@@ -103,7 +103,7 @@ function createDocument() {
   };
 }
 
-async function boot(raw) {
+async function boot(raw, published = {}) {
   const document = createDocument();
   const cache = new Map();
   const run = new AsyncFunction(
@@ -116,7 +116,8 @@ async function boot(raw) {
     covariance, stats, optimize, validateInputs, demoData, normalizeFxHedge, renderHedgeMarkup, renderRiskMarkup,
     defaultPolicy, validatePolicy, satisfiesPolicy, optimizeAllocation, samplePortfolios, initDataInfoUI, frontierTarget,
     mountHedgeAnalytics, mountFxWorkspace, document, { getItem: key => cache.get(key) ?? null, setItem: (key, value) => cache.set(key, value) },
-    async () => ({ ok: true, json: async () => structuredClone(raw) }),
+    async url => url === './data.json' ? { ok: true, json: async () => structuredClone(raw) }
+      : url in published ? { ok: true, json: async () => structuredClone(published[url]) } : { ok: false, status: 404 },
     () => 1, () => {},
   );
   const get = id => {
@@ -461,10 +462,24 @@ for (const [label, raw] of datasets) {
 
 }
 
+const syntheticMarket=()=>({kind:'bje_data_info',schemaVersion:1,meta:{source:'synthetic DailyRate',asOf:'2026-10-16',latestObservation:'2026-10-15',sha256:'a'.repeat(64),units:{hedge:'source_value'}},market:{rates:[{id:'rate',label:'한국 3년',value:3,previous:2.9,change:.1,unit:'%',asOf:'2026-10-15',previousDate:'2026-10-14',source:'DailyRate!C'}],risk:[],fx:[]},bond:null,fxHedge:{unit:'source_value',source:'synthetic DailyRate',pairs:[{currency:'USDKRW',asOf:'2026-10-15',hedge3m:-1,hedge6m:-2,hedge12m:-3,fxVol:10,history:[{date:'2026-10-14',value:-1},{date:'2026-10-15',value:-2}]}]}});
+
+test('published market snapshot loads at startup and a missing one leaves the default views', async()=>{
+  const market=syntheticMarket(),app=await boot(demoData,{'./data/market.json':market});
+  assert.equal(app.dataInfoUI.getSnapshot().meta.source,'synthetic DailyRate');
+  assert.match(app.get('marketSnapshot').innerHTML,/한국 3년/);
+  assert.equal(app.get('dataInfoError').hidden,true);
+  const plain=await boot(demoData);
+  assert.equal(plain.dataInfoUI.getSnapshot(),null);
+  assert.equal(plain.get('dataInfoError').hidden,true);
+  const broken=await boot(demoData,{'./data/market.json':{kind:'bje_data_info'}});
+  assert.equal(broken.get('dataInfoError').hidden,false);
+});
+
 test('market import changes market and hedge views without touching applied portfolio assumptions', async()=>{
   const app=await boot(demoData);
   const prior=app.snapshot();
-  const market={kind:'bje_data_info',schemaVersion:1,meta:{source:'synthetic DailyRate',asOf:'2026-10-16',latestObservation:'2026-10-15',sha256:'a'.repeat(64),units:{hedge:'source_value'}},market:{rates:[{id:'rate',label:'한국 3년',value:3,previous:2.9,change:.1,unit:'%',asOf:'2026-10-15',previousDate:'2026-10-14',source:'DailyRate!C'}],risk:[],fx:[]},bond:null,fxHedge:{unit:'source_value',source:'synthetic DailyRate',pairs:[{currency:'USDKRW',asOf:'2026-10-15',hedge3m:-1,hedge6m:-2,hedge12m:-3,fxVol:10,history:[{date:'2026-10-14',value:-1},{date:'2026-10-15',value:-2}]}]}};
+  const market=syntheticMarket();
   app.dataInfoUI.apply(market);
   assert.deepEqual(app.snapshot(),prior);
   assert.match(app.get('marketSnapshot').innerHTML,/한국 3년/);

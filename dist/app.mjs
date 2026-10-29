@@ -344,7 +344,12 @@ document.querySelectorAll('[data-period]').forEach(b=>b.onclick=()=>{period=Numb
 $('importFile').onchange=async e=>{clearError();const file=e.target.files[0];if(!file)return;try{if(file.size>5e6)throw Error('JSON 파일은 5MB 이하여야 합니다.');const raw=JSON.parse(await file.text());normalizeData(raw);install(raw,false);message('새 데이터 스냅샷을 적용했습니다. 새로고침 시 원래 스냅샷으로 돌아갑니다.');}catch(err){message('데이터를 불러오지 못했습니다: '+err.message,true);}finally{e.target.value='';}};
 try{const response=await fetch('./data.json',{cache:'no-store'});if(!response.ok)throw Error('data');install(await response.json());}catch(e){install(demoData);message('데이터 스냅샷을 읽지 못해 예시 가정으로 시작합니다.',true);}
 const embeddedInfo=$('dataInfoEmbedded');
-if(embeddedInfo?.textContent){try{dataInfoUI.apply(JSON.parse(embeddedInfo.textContent));}catch(error){$('dataInfoError').textContent='시장자료 초기화 오류 · '+error.message;$('dataInfoError').hidden=false;}}
+const showInfoError=error=>{$('dataInfoError').textContent='시장자료 초기화 오류 · '+error.message;$('dataInfoError').hidden=false;};
+if(embeddedInfo?.textContent){try{dataInfoUI.apply(JSON.parse(embeddedInfo.textContent));}catch(error){showInfoError(error);}}
+else{
+  // Published by hahajongha/for_data from its private data_info workbook; absent until the first publish.
+  try{const response=await fetch('./data/market.json',{cache:'no-store'});if(response.ok)dataInfoUI.apply(await response.json());}catch(error){showInfoError(error);}
+}
 
 if(typeof ResizeObserver!=='undefined'){
   const widths=new WeakMap();

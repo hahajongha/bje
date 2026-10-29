@@ -18,9 +18,13 @@
 
 ## 데이터 경계
 
-**공개 소스의 `dist/data.json`과 `dist/demo-data.mjs`에는 가상 입력만 있습니다.** 실제 Drive Excel, 실제 수익률, Drive 파일 ID와 접근 토큰은 이 소스 묶음에 없습니다. 실제 데이터가 들어간 배포는 비공개를 유지해야 합니다. 실제 데이터를 공개 `dist/data.json`에 덮어써 커밋하지 마십시오.
+**`dist/data.json`과 `dist/demo-data.mjs`에는 가상 입력만 있습니다.** 실제 data_bb 자료와 원본 Excel, Drive 파일 ID와 접근 토큰은 이 저장소에 두지 않습니다. 실제 데이터를 `dist/data.json`에 덮어써 커밋하지 마십시오.
 
-스냅샷을 읽지 못하면 예시 가정으로 시작하고 오류 안내를 보여 줍니다. 자동 Drive 동기화 기능은 없습니다. JSON 가져오기는 브라우저 메모리에서 처리하며 업로드하지 않습니다. 가져온 스냅샷은 새로고침하면 기본 데이터로 돌아갑니다. 사용자가 적용한 투자 가정만 해당 스냅샷별로 localStorage에 저장됩니다.
+시장·Hedge·FX 자료(`dist/data/market.json`, `bje_data_info` v1)는 비공개 저장소 `hahajongha/for_data`가 발행합니다. Drive `claude_for_data/bje/data_info.xlsx`가 `for_data/data/bje/`로 동기화되면 그 저장소의 `Build & publish BJE market data` 워크플로가 이 저장소의 `scripts/build_hedge_fx_snapshot.py`로 변환해 `main`의 `dist/data/market.json`에 커밋합니다. 원본 Excel은 비공개 저장소에만 있고, 파생 JSON은 공개됩니다. 앱은 시작할 때 이 파일을 읽어 적용하며, 파일이 없으면 기본 화면을 유지합니다. 손으로 수정하지 마십시오.
+
+DailyRate 열은 8~9행 헤더 쌍으로 찾습니다. 열 위치가 바뀌어도 읽고, 같은 이름의 9행 표기가 바뀌었거나 같은 헤더가 중복되면 거절합니다. 통합 문서에 없는 헤더(예: GB10Y, MOVE, KIS채권종합)는 해당 시리즈를 비워 두고 `meta.quality.missingHeaders`에 기록합니다. `scripts/verify_info_snapshot.py`는 독립 대조용이라 기존 열 위치를 그대로 사용합니다.
+
+포트폴리오 스냅샷을 읽지 못하면 예시 가정으로 시작하고 오류 안내를 보여 줍니다. JSON 가져오기는 브라우저 메모리에서 처리하며 업로드하지 않습니다. 가져온 스냅샷은 새로고침하면 기본 데이터로 돌아갑니다. 사용자가 적용한 투자 가정만 해당 스냅샷별로 localStorage에 저장됩니다.
 
 ## 계산
 
